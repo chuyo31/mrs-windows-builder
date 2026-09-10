@@ -48,10 +48,10 @@ análisis e inventario (solo lectura). El resto de bibliotecas siguen siendo
 
 ---
 
-## Estado actual — P3
+## Estado actual — P4
 
-Inventario de SOLO LECTURA de la imagen seleccionada
-(ver [`prompts/03-resultado.md`](prompts/03-resultado.md)).
+Inventario **real** de SOLO LECTURA de la imagen seleccionada: montar → leer →
+desmontar (ver [`prompts/04-resultado.md`](prompts/04-resultado.md)).
 
 **Funciona:**
 
@@ -63,8 +63,11 @@ Inventario de SOLO LECTURA de la imagen seleccionada
 - **Continuar** → pantalla de **INVENTARIO** de la edición elegida:
   `MainWindow → ImageInventoryService → DismRunner → DISM.exe`.
   - Workspace temporal único (`%LOCALAPPDATA%\MRS-Windows-Builder\workspaces\<GUID>\`).
-  - Monta el índice con `DISM /Mount-Image ... /ReadOnly`, inventaría y
-    **desmonta siempre** (`/Unmount-Image /Discard`, con verificación).
+  - Comprueba montajes previos (`/Get-MountedWimInfo`) y recupera solo los
+    huérfanos propios.
+  - Monta el índice elegido con `DISM /Mount-Wim ... /ReadOnly`, inventaría y
+    **desmonta siempre** (`/Unmount-Wim /Discard`), luego verifica con
+    `/Get-MountedWimInfo` que no queda ningún montaje.
   - Inventaría: paquetes, características, capacidades, apps provisionadas y
     drivers. Contadores + tabla por categoría (Nombre / Estado / Detalles).
   - Si algo falla: se intenta desmontar, se conserva el workspace de diagnóstico
@@ -121,6 +124,6 @@ app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 - [x] **P1** – Primera interfaz funcional (selección de ISO, perfiles, log).
 - [x] **P2** – `MRS.DismEngine` + `MRS.ImageEngine`: análisis real de la imagen (solo lectura) y listado de ediciones.
 - [x] **P3** – Inventario de SOLO LECTURA (montar → inspeccionar → desmontar): paquetes, features, capabilities, apps provisionadas y drivers.
-- [ ] **P4** – `MRS.ProfileEngine` + `MRS.ComponentCatalog`: aplicación de perfiles.
-- [ ] **P5** – `MRS.PostInstall`: tweaks y post-instalación.
-- [ ] **P6** – Regeneración de la ISO final.
+- [x] **P4** – Inventario **real** del WIM: `/Mount-Wim` del índice elegido, las 5 categorías vía DISM, `/Unmount-Wim /Discard` garantizado y verificación de que no quedan montajes.
+- [ ] **P5** – `MRS.ProfileEngine` + `MRS.ComponentCatalog`: aplicación de perfiles.
+- [ ] **P6** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.

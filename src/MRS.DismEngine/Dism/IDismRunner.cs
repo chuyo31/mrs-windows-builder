@@ -15,16 +15,18 @@ public interface IDismRunner
     Task<ProcessRunResult> GetWimInfoAsync(string imagePath, CancellationToken cancellationToken = default);
     Task<ProcessRunResult> GetWimInfoAsync(string imagePath, int index, CancellationToken cancellationToken = default);
 
-    // --- Montaje temporal --------------------------------------------------
+    // --- Montaje temporal del WIM ----------------------------------------
 
-    Task<ProcessRunResult> GetMountedImageInfoAsync(CancellationToken cancellationToken = default);
+    /// <summary><c>DISM /English /Get-MountedWimInfo</c>.</summary>
+    Task<ProcessRunResult> GetMountedWimInfoAsync(CancellationToken cancellationToken = default);
 
-    Task<ProcessRunResult> MountImageAsync(
-        string imageFile, int index, string mountDir, bool readOnly = true,
+    /// <summary><c>DISM /English /Mount-Wim /WimFile:.. /Index:N /MountDir:.. /ReadOnly</c>.</summary>
+    Task<ProcessRunResult> MountWimAsync(
+        string wimFile, int index, string mountDir, bool readOnly = true,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Desmonta descartando cambios (<c>/Unmount-Image /Discard</c>).</summary>
-    Task<ProcessRunResult> UnmountImageDiscardAsync(string mountDir, CancellationToken cancellationToken = default);
+    /// <summary>Desmonta descartando cambios (<c>/Unmount-Wim /Discard</c>).</summary>
+    Task<ProcessRunResult> UnmountWimDiscardAsync(string mountDir, CancellationToken cancellationToken = default);
 
     // --- Inventario de una imagen montada (solo lectura) ------------------
 

@@ -48,22 +48,22 @@ internal sealed class FakeDismRunner : IDismRunner
         return Result($"/Get-WimInfo /Index:{index}", exitCode, output, DetailTimedOut);
     }
 
-    public Task<ProcessRunResult> GetMountedImageInfoAsync(CancellationToken cancellationToken = default)
+    public Task<ProcessRunResult> GetMountedWimInfoAsync(CancellationToken cancellationToken = default)
     {
         Calls.Add("mountedinfo");
-        return Result("/Get-MountedImageInfo", MountedImageInfoExitCode, MountedImageInfoOutput, false);
+        return Result("/Get-MountedWimInfo", MountedImageInfoExitCode, MountedImageInfoOutput, false);
     }
 
-    public Task<ProcessRunResult> MountImageAsync(string imageFile, int index, string mountDir, bool readOnly = true, CancellationToken cancellationToken = default)
+    public Task<ProcessRunResult> MountWimAsync(string wimFile, int index, string mountDir, bool readOnly = true, CancellationToken cancellationToken = default)
     {
         Calls.Add($"mount:{mountDir}:{index}:ro={readOnly}");
-        return Result("/Mount-Image", MountExitCode, string.Empty, MountTimedOut);
+        return Result("/Mount-Wim", MountExitCode, string.Empty, MountTimedOut);
     }
 
-    public Task<ProcessRunResult> UnmountImageDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
+    public Task<ProcessRunResult> UnmountWimDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
     {
         Calls.Add($"unmount:{mountDir}");
-        return Result("/Unmount-Image /Discard", UnmountExitCode, string.Empty, false);
+        return Result("/Unmount-Wim /Discard", UnmountExitCode, string.Empty, false);
     }
 
     public Task<ProcessRunResult> GetPackagesAsync(string mountDir, CancellationToken cancellationToken = default)

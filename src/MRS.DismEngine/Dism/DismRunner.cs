@@ -36,19 +36,19 @@ public sealed class DismRunner : IDismRunner
     public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, int index, CancellationToken cancellationToken = default)
         => ExecuteAsync($"/English /Get-WimInfo /WimFile:\"{imagePath}\" /Index:{index}", QueryTimeout, cancellationToken);
 
-    public Task<ProcessRunResult> GetMountedImageInfoAsync(CancellationToken cancellationToken = default)
-        => ExecuteAsync("/English /Get-MountedImageInfo", QueryTimeout, cancellationToken);
+    public Task<ProcessRunResult> GetMountedWimInfoAsync(CancellationToken cancellationToken = default)
+        => ExecuteAsync("/English /Get-MountedWimInfo", QueryTimeout, cancellationToken);
 
-    public Task<ProcessRunResult> MountImageAsync(
-        string imageFile, int index, string mountDir, bool readOnly = true,
+    public Task<ProcessRunResult> MountWimAsync(
+        string wimFile, int index, string mountDir, bool readOnly = true,
         CancellationToken cancellationToken = default)
         => ExecuteAsync(
-            $"/English /Mount-Image /ImageFile:\"{imageFile}\" /Index:{index} /MountDir:\"{mountDir}\"" +
+            $"/English /Mount-Wim /WimFile:\"{wimFile}\" /Index:{index} /MountDir:\"{mountDir}\"" +
             (readOnly ? " /ReadOnly" : string.Empty),
             MountTimeout, cancellationToken);
 
-    public Task<ProcessRunResult> UnmountImageDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
-        => ExecuteAsync($"/English /Unmount-Image /MountDir:\"{mountDir}\" /Discard", UnmountTimeout, cancellationToken);
+    public Task<ProcessRunResult> UnmountWimDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Unmount-Wim /MountDir:\"{mountDir}\" /Discard", UnmountTimeout, cancellationToken);
 
     public Task<ProcessRunResult> GetPackagesAsync(string mountDir, CancellationToken cancellationToken = default)
         => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Packages", QueryTimeout, cancellationToken);

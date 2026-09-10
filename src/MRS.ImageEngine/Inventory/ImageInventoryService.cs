@@ -86,7 +86,7 @@ public sealed partial class ImageInventoryService
             await RecoverOrphanMountsAsync(cancellationToken).ConfigureAwait(false);
 
             _logger.Info($"Montando imagen índice {index}...");
-            var mount = await _dism.MountImageAsync(wimPath, index, mountDir, readOnly: true, cancellationToken).ConfigureAwait(false);
+            var mount = await _dism.MountWimAsync(wimPath, index, mountDir, readOnly: true, cancellationToken).ConfigureAwait(false);
             EnsureDismSucceeded(mount, "Montaje de la imagen");
             mounted = true;
 
@@ -120,12 +120,12 @@ public sealed partial class ImageInventoryService
             };
 
             _logger.Info("Inventario completado.");
+            _logger.Info("Imagen inventariada correctamente.");
             return new InventoryResult(inventory, workspace.RootPath, WorkspaceKept: false);
         }
         catch
         {
             keepWorkspace = true;
-            _logger.Error($"El inventario falló. Workspace de diagnóstico conservado en: {workspace.RootPath}");
             throw;
         }
         finally
@@ -133,7 +133,11 @@ public sealed partial class ImageInventoryService
             if (mounted)
                 await SafeUnmountAsync(mountDir, cancellationToken).ConfigureAwait(false);
 
-            if (!keepWorkspace)
+            if (keepWorkspace)
+            {
+                _logger.Info($"Workspace conservado: {workspace.RootPath}");
+            }
+            else
             {
                 try { workspace.Delete(); }
                 catch (Exception ex) { _logger.Warn($"No se pudo eliminar el workspace: {ex.Message}"); }
@@ -153,7 +157,9 @@ public sealed partial class ImageInventoryService
         if (result.TimedOut || result.ExitCode != 0)
         {
             _logger.Error($"Inventario de {categoryForError} fallido.");
-            _logger.Error($"Código DISM: {result.ExitCode}");
+            _logger.Error($"Comando: {result.CommandLine}");
+            _logger.Error($"ExitCode: {result.ExitCode}");
+            LogDismDiagnostics(result);
             throw new ImageAnalysisException(result.ExitCode, $"Inventario de {categoryForError} fallido.");
         }
 
@@ -164,24 +170,47 @@ public sealed partial class ImageInventoryService
     {
         try
         {
-            _logger.Info("Desmontando imagen...");
-            var unmount = await _dism.UnmountImageDiscardAsync(mountDir, cancellationToken).ConfigureAwait(false);
+            _logger.Info("Intentando desmontar imagen...");
+            var unmount = await _dism.UnmountWimDiscardAsync(mountDir, cancellationToken).ConfigureAwait(false);
 
             if (!unmount.Succeeded)
             {
-                _logger.Error($"Fallo al desmontar la imagen. Código DISM: {unmount.ExitCode}");
+                _logger.Error($"Fallo al desmontar la imagen. ExitCode: {unmount.ExitCode}");
+                LogDismDiagnostics(unmount);
                 return;
             }
 
-            var mountedInfo = await _dism.GetMountedImageInfoAsync(cancellationToken).ConfigureAwait(false);
+            var mountedInfo = await _dism.GetMountedWimInfoAsync(cancellationToken).ConfigureAwait(false);
             if (mountedInfo.Succeeded && MountDirPresent(mountedInfo.StandardOutput, mountDir))
                 _logger.Warn("La imagen sigue apareciendo como montada; revisar manualmente.");
             else
-                _logger.Info("Imagen desmontada correctamente.");
+                _logger.Info("Imagen desmontada correctamente. No quedan montajes de MRS.");
         }
         catch (Exception ex)
         {
             _logger.Error($"Error al desmontar la imagen: {ex.Message}");
+        }
+    }
+
+    /// <summary>Vuelca en el log un extracto de stderr/stdout de DISM (sin ruido).</summary>
+    private void LogDismDiagnostics(ProcessRunResult result)
+    {
+        var detail = !string.IsNullOrWhiteSpace(result.StandardError)
+            ? result.StandardError
+            : result.StandardOutput;
+
+        detail = detail?.Trim() ?? string.Empty;
+        if (detail.Length == 0)
+            return;
+
+        if (detail.Length > 600)
+            detail = detail[..600] + " […]";
+
+        foreach (var line in detail.Split('\n'))
+        {
+            var clean = line.TrimEnd('\r').Trim();
+            if (clean.Length > 0)
+                _logger.Error($"DISM: {clean}");
         }
     }
 
@@ -194,7 +223,7 @@ public sealed partial class ImageInventoryService
         ProcessRunResult info;
         try
         {
-            info = await _dism.GetMountedImageInfoAsync(cancellationToken).ConfigureAwait(false);
+            info = await _dism.GetMountedWimInfoAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -215,7 +244,7 @@ public sealed partial class ImageInventoryService
             _logger.Warn($"Montaje huérfano relacionado con MRS detectado: {mountDir}. Intentando recuperar...");
             try
             {
-                var recovery = await _dism.UnmountImageDiscardAsync(mountDir, cancellationToken).ConfigureAwait(false);
+                var recovery = await _dism.UnmountWimDiscardAsync(mountDir, cancellationToken).ConfigureAwait(false);
                 _logger.Info(recovery.Succeeded
                     ? $"Montaje huérfano recuperado: {mountDir}"
                     : $"No se pudo recuperar el montaje huérfano {mountDir} (código {recovery.ExitCode}).");
@@ -237,7 +266,10 @@ public sealed partial class ImageInventoryService
 
         if (result.ExitCode != 0)
         {
-            _logger.Error($"{operation} fallido. Código DISM: {result.ExitCode}");
+            _logger.Error($"{operation} fallido.");
+            _logger.Error($"Comando: {result.CommandLine}");
+            _logger.Error($"ExitCode: {result.ExitCode}");
+            LogDismDiagnostics(result);
             throw new ImageAnalysisException(result.ExitCode, $"{operation} fallido.");
         }
     }

@@ -66,6 +66,48 @@ public sealed class ImageInventoryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildInventoryAsync_runs_operations_in_the_expected_order()
+    {
+        var runner = FullyPopulatedRunner();
+
+        await Service(runner).BuildInventoryAsync(@"X:\sources\install.wim", index: 2);
+
+        var relevant = runner.Calls
+            .Select(c => c.StartsWith("mount:") ? "mount" : c.StartsWith("unmount:") ? "unmount" : c)
+            .Where(c => c is "mount" or "packages" or "features" or "capabilities" or "apps" or "drivers" or "unmount")
+            .ToArray();
+
+        Assert.Equal(
+            new[] { "mount", "packages", "features", "capabilities", "apps", "drivers", "unmount" },
+            relevant);
+    }
+
+    [Fact]
+    public async Task BuildInventoryAsync_keeps_workspace_when_mount_fails()
+    {
+        var runner = FullyPopulatedRunner();
+        runner.MountExitCode = 5;
+
+        await Assert.ThrowsAsync<ImageAnalysisException>(
+            () => Service(runner).BuildInventoryAsync(@"X:\sources\install.wim", index: 1));
+
+        Assert.True(Directory.EnumerateDirectories(_workspaceRoot).Any());
+        Assert.DoesNotContain(runner.Calls, c => c.StartsWith("unmount:")); // no se llegó a montar
+    }
+
+    [Fact]
+    public async Task BuildInventoryAsync_verifies_no_mounts_remain_after_unmount()
+    {
+        var runner = FullyPopulatedRunner();
+
+        await Service(runner).BuildInventoryAsync(@"X:\sources\install.wim", index: 1);
+
+        // Tras desmontar se vuelve a consultar el estado de los montajes.
+        var unmountIndex = runner.Calls.FindIndex(c => c.StartsWith("unmount:"));
+        Assert.Contains("mountedinfo", runner.Calls.Skip(unmountIndex + 1));
+    }
+
+    [Fact]
     public async Task BuildInventoryAsync_propagates_dism_exit_code_when_mount_fails()
     {
         var runner = FullyPopulatedRunner();
