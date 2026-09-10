@@ -194,3 +194,46 @@ aparecen las ediciones (Home / Pro); y no queda ningún montaje de ISO abierto.
 
 Nota: en esta corrección **no** se ha modificado ni montado el WIM; el alcance se
 limita a la elevación del análisis inicial.
+
+---
+
+## Corrección visual ComboBox (P3.2)
+
+La prueba real del análisis funcionó (Windows 11 / 26H2 / 26300.9278 / x64 /
+es-ES / WIM, con ediciones Home y Pro), pero el desplegable "Edición" heredaba el
+*chrome* por defecto de WPF: fondo blanco + texto casi blanco, con lo que
+"Windows 11 Home" y "Windows 11 Pro" apenas se leían.
+
+### Qué se modificó
+
+Solo estilo, en `MainWindow.xaml`:
+
+- **`EditionCombo`** (`ComboBox`): `ControlTemplate` completo con tema oscuro:
+  botón desplegable con fondo `FieldBackground`, borde redondeado, flecha propia,
+  y **popup con fondo oscuro** (`CardBackground` + borde + sombra) en lugar del
+  blanco del sistema. Texto seleccionado en casi-blanco. Placeholder
+  "Selecciona una edición" cuando no hay selección.
+- **`EditionComboItem`** (`ComboBoxItem`, aplicado vía `ItemContainerStyle`):
+  - Normal: fondo transparente sobre el popup oscuro, texto `TextPrimary`.
+  - Hover / resaltado: fondo `#FF2A2F3B`, texto blanco.
+  - Seleccionado: fondo `Accent` (azul de la app), texto blanco.
+  - Seleccionado + hover: fondo `AccentHover`.
+  - Deshabilitado: texto `DisabledText` (contraste suficiente).
+
+Se mantienen fuente Segoe UI, tamaños, bordes/redondeados y el resto de la
+interfaz. No se tocó ninguna funcionalidad: `DismRunner`, `ImageService` y los
+parsers quedan intactos.
+
+### Resultado
+
+```
+dotnet build : Compilación de MainWindow.xaml y del código sin errores
+               (0 errores de markup/C#, 0 advertencias).
+dotnet test  : Correctas! - Con error: 0, Superado: 74, Omitido: 0, Total: 74
+```
+
+> Nota de entorno: el `dotnet build` final no pudo copiar `MRS.WindowsBuilder.exe`
+> porque había una instancia **elevada** de la app en ejecución bloqueando el
+> archivo. Es un bloqueo de archivo, no un error de código: la compilación de
+> XAML y C# se completa sin errores. Basta cerrar la app y volver a ejecutar
+> `dotnet build` para regenerar el `.exe`.
