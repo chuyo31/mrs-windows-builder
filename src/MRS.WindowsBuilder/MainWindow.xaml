@@ -261,7 +261,8 @@
 
                     <TextBlock Text="Edición" Style="{StaticResource FieldLabel}" Margin="0,20,0,6"/>
                     <ComboBox x:Name="EditionCombo" Style="{StaticResource EditionCombo}"
-                              IsEnabled="False"/>
+                              IsEnabled="False"
+                              SelectionChanged="EditionCombo_SelectionChanged"/>
                 </StackPanel>
             </Border>
 

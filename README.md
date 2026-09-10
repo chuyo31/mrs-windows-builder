@@ -42,36 +42,39 @@ varias bibliotecas de motor:
 | `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
-Las bibliotecas de motor son **stubs** por ahora (`Class1.cs` vacío); se irán
-implementando en pasos posteriores.
+`MRS.DismEngine` e `MRS.ImageEngine` ya están implementados para la fase de
+análisis (solo lectura). El resto de bibliotecas siguen siendo **stubs** y se
+irán implementando en pasos posteriores.
 
 ---
 
-## Estado actual — P1
+## Estado actual — P2
 
-Primera interfaz funcional de `MRS.WindowsBuilder`
-(ver [`prompts/02-resultado.md`](prompts/02-resultado.md)).
+Análisis **real** de la ISO, 100% lectura
+(ver [`prompts/03-resultado.md`](prompts/03-resultado.md)).
 
 **Funciona:**
 
 - UI dark theme estilo Windows 11 (azul eléctrico, bordes redondeados, sombras
-  suaves, Segoe UI, ventana ~1200×720).
-- Barra superior con logo, título y estado.
-- Panel **Origen**: botón "Seleccionar ISO" con `OpenFileDialog` limitado a
-  `.iso`, ruta en caja de solo lectura, botón "Analizar imagen" (se habilita al
-  elegir ISO) y ComboBox "Edición" (deshabilitado).
-- Tarjeta **Información de la imagen**: campos SO, Versión, Build, Arquitectura,
-  Idioma y Tipo de imagen, todos en `--`.
-- Tarjeta **Perfiles**: NORMAL / LIGHT / MEDIUM con selección visual única.
-- Área de **log** tipo consola con mensajes de inicio.
-- Botón **Continuar** (inferior derecha), se habilita cuando hay ISO + perfil.
+  suaves, Segoe UI, ventana ~1200×720) con log `[INFO] [WARN] [ERROR] [DISM]`.
+- **Seleccionar ISO**: solo `.iso`, comprueba que existe, monta la ISO como
+  unidad de solo lectura, localiza `sources\install.wim` o `install.esd` y
+  desmonta. Error claro si no hay imagen.
+- **Analizar imagen**: `MainWindow → ImageService → DismRunner → DISM.exe`.
+  Ejecuta `DISM /English /Get-WimInfo` (listado + un `/Index:N` por edición) y
+  obtiene sistema, versión comercial, versión/build, arquitectura, idioma, tipo
+  WIM/ESD y todas las ediciones (índice + nombre + descripción). Los valores
+  salen de DISM, no están quemados.
+- Tarjeta **Información de la imagen** rellenada tras el análisis; `ComboBox`
+  "Edición" poblado; al elegir una edición se habilita **Continuar**.
+- Manejo de errores de DISM sin ocultar el código de salida.
+- Ejecutor de procesos externos robusto y sistema de logging reutilizable.
+- Modelos y parser preparados para ISO/WIM/ESD, Windows 10/11 y x86/x64/ARM64.
 
 **Todavía NO hace:**
 
-- Análisis real de la imagen — "Analizar imagen" solo escribe en el log
-  `[INFO] Función pendiente de conectar con MRS.ImageEngine`.
-- Montaje DISM ni modificación de imágenes.
-- Generación de la ISO final.
+- Montaje del WIM, eliminación de componentes, perfiles, registro offline.
+- Compresión ni generación de la ISO final.
 
 ---
 
@@ -82,6 +85,9 @@ Requisitos: **.NET SDK 8.0** en Windows.
 ```powershell
 # Compilar toda la solución
 dotnet build MRS-Windows-Builder.sln
+
+# Ejecutar los tests
+dotnet test MRS-Windows-Builder.sln
 
 # Ejecutar la aplicación
 dotnet run --project src/MRS.WindowsBuilder/MRS.WindowsBuilder.csproj
@@ -95,12 +101,14 @@ dotnet run --project src/MRS.WindowsBuilder/MRS.WindowsBuilder.csproj
 MRS-Windows-Builder.sln
 src/
   MRS.WindowsBuilder/     App WPF (MainWindow.xaml / .xaml.cs)
+  MRS.DismEngine/         Procesos externos, logging e invocación de DISM
+  MRS.ImageEngine/        Modelos, parser de DISM, montaje de ISO, ImageService
   MRS.ISOEngine/          (stub)
-  MRS.ImageEngine/        (stub)
-  MRS.DismEngine/         (stub)
   MRS.ComponentCatalog/   (stub)
   MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
+tests/
+  MRS.ImageEngine.Tests/  Tests xUnit (parser, formato, versión, ImageService)
 prompts/                  Prompts de desarrollo y resultados por paso
 app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 ```
@@ -110,7 +118,7 @@ app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 ## Roadmap
 
 - [x] **P1** – Primera interfaz funcional (selección de ISO, perfiles, log).
-- [ ] **P2** – `MRS.ImageEngine`: análisis real de la imagen y listado de ediciones.
+- [x] **P2** – `MRS.DismEngine` + `MRS.ImageEngine`: análisis real de la imagen (solo lectura) y listado de ediciones.
 - [ ] **P3** – `MRS.ISOEngine` / `MRS.DismEngine`: montaje y modificación.
 - [ ] **P4** – `MRS.ProfileEngine` + `MRS.ComponentCatalog`: aplicación de perfiles.
 - [ ] **P5** – `MRS.PostInstall`: tweaks y post-instalación.

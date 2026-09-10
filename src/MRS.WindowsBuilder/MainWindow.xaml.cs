@@ -1,26 +1,67 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using MRS.DismEngine.Dism;
+using MRS.DismEngine.Logging;
+using MRS.DismEngine.Processes;
+using MRS.ImageEngine;
+using MRS.ImageEngine.Iso;
+using MRS.ImageEngine.Models;
+using MRS.ImageEngine.Parsing;
 
 namespace MRS.WindowsBuilder;
 
 /// <summary>
 /// Interaction logic for MainWindow.xaml
+///
+/// La ventana no contiene lógica DISM: delega en <see cref="ImageService"/>.
 /// </summary>
 public partial class MainWindow : Window
 {
+    private readonly AppLogger _logger = new();
+    private readonly ImageService _imageService;
+
+    private IsoInspectionResult? _iso;
+    private ImageInfo? _imageInfo;
     private string? _selectedProfile;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        Log("[INFO] MRS Windows Builder iniciado");
-        Log("[INFO] Esperando seleccionar una ISO");
+        _logger.Entry += OnLogEntry;
+
+        var processRunner = new ProcessRunner();
+        _imageService = new ImageService(
+            new DismRunner(processRunner, _logger),
+            new IsoMounter(processRunner, _logger),
+            new DismWimInfoParser(),
+            _logger);
+
+        _logger.Info("MRS Windows Builder iniciado");
+        _logger.Info("Esperando seleccionar una ISO");
     }
 
-    private void SelectIsoButton_Click(object sender, RoutedEventArgs e)
+    // ---- Log ---------------------------------------------------------------
+
+    private void OnLogEntry(object? sender, LogEntry entry)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => OnLogEntry(sender, entry));
+            return;
+        }
+
+        LogBox.AppendText($"{entry}{Environment.NewLine}");
+        LogBox.CaretIndex = LogBox.Text.Length;
+        LogScroller.ScrollToEnd();
+    }
+
+    // ---- Seleccionar ISO -------------------------------------------------------
+
+    private async void SelectIsoButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
@@ -33,50 +74,172 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true)
             return;
 
-        IsoPathBox.Text = dialog.FileName;
-        AnalyzeButton.IsEnabled = true;
-        StatusText.Text = "ISO seleccionada";
-        FooterHint.Text = "Pulsa \"Analizar imagen\" para continuar";
+        var path = dialog.FileName;
+        if (!File.Exists(path))
+        {
+            _logger.Error($"La ISO no existe: {path}");
+            return;
+        }
 
-        Log($"[INFO] ISO seleccionada: {dialog.FileName}");
+        IsoPathBox.Text = path;
+        ResetImageInfo();
+        _iso = null;
+        SetBusy(true);
+        StatusText.Text = "Comprobando ISO...";
+        _logger.Info($"ISO seleccionada: {path}");
+
+        try
+        {
+            _iso = await _imageService.InspectIsoAsync(path);
+
+            if (!_iso.ImageFound)
+            {
+                _logger.Error(@"La ISO no contiene sources\install.wim ni sources\install.esd.");
+                MessageBox.Show(this,
+                    "La ISO no contiene una imagen de instalación válida.",
+                    "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                StatusText.Text = "ISO no válida";
+                return;
+            }
+
+            _logger.Info($"Imagen detectada: sources\\{Path.GetFileName(_iso.ImagePath!)} ({_iso.Format}).");
+            StatusText.Text = "ISO lista para analizar";
+            FooterHint.Text = "Pulsa \"Analizar imagen\"";
+        }
+        catch (Exception ex)
+        {
+            _iso = null;
+            _logger.Error($"No se pudo comprobar la ISO: {ex.Message}");
+            MessageBox.Show(this, "No se ha podido leer la ISO.",
+                "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Error";
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 
-    private void AnalyzeButton_Click(object sender, RoutedEventArgs e)
+    // ---- Analizar imagen ----------------------------------------------------
+
+    private async void AnalyzeButton_Click(object sender, RoutedEventArgs e)
     {
-        Log("[INFO] Analizando imagen...");
-        Log("[INFO] Función pendiente de conectar con MRS.ImageEngine");
-        StatusText.Text = "Análisis pendiente";
+        var isoPath = IsoPathBox.Text;
+        if (string.IsNullOrWhiteSpace(isoPath))
+            return;
+
+        SetBusy(true);
+        StatusText.Text = "Analizando imagen...";
+        _logger.Info("Analizando imagen...");
+
+        try
+        {
+            var info = await _imageService.AnalyzeIsoAsync(isoPath);
+            _imageInfo = info;
+            PopulateImageInfo(info);
+
+            _logger.Info($"Análisis completado: {info.OperatingSystem} " +
+                         $"{info.DisplayVersion ?? "(versión desconocida)"} · {info.Editions.Count} edición(es).");
+            StatusText.Text = "Imagen analizada";
+            FooterHint.Text = "Selecciona una edición para continuar";
+        }
+        catch (ImageAnalysisException ex)
+        {
+            _logger.Error("DISM no pudo analizar la imagen.");
+            _logger.Error($"Código: {ex.ExitCode}");
+            MessageBox.Show(this, "No se ha podido analizar la imagen.",
+                "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Error de análisis";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Error inesperado al analizar la imagen: {ex.Message}");
+            MessageBox.Show(this, "No se ha podido analizar la imagen.",
+                "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Error de análisis";
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    // ---- Edición / Perfiles / Continuar -----------------------------------
+
+    private void EditionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EditionCombo.SelectedItem is ImageEdition edition)
+        {
+            _logger.Info($"Edición seleccionada: {edition.Name} (índice {edition.Index}).");
+            FooterHint.Text = "Listo para continuar";
+            ContinueButton.IsEnabled = true;
+        }
+        else
+        {
+            ContinueButton.IsEnabled = false;
+        }
     }
 
     private void Profile_Checked(object sender, RoutedEventArgs e)
     {
-        if (sender is not RadioButton rb)
-            return;
-
-        _selectedProfile = rb.Content?.ToString();
-        Log($"[INFO] Perfil seleccionado: {_selectedProfile}");
-
-        UpdateContinueState();
+        if (sender is RadioButton rb)
+        {
+            _selectedProfile = rb.Content?.ToString();
+            _logger.Info($"Perfil seleccionado: {_selectedProfile}");
+        }
     }
 
     private void ContinueButton_Click(object sender, RoutedEventArgs e)
     {
-        Log($"[INFO] Continuar con perfil {_selectedProfile} (paso siguiente pendiente)");
+        var edition = EditionCombo.SelectedItem as ImageEdition;
+        _logger.Info($"Continuar con {edition?.Name ?? "(sin edición)"} / perfil {_selectedProfile ?? "(sin perfil)"} " +
+                     "(siguiente fase pendiente).");
     }
 
-    private void UpdateContinueState()
+    // ---- Estado de la interfaz ------------------------------------------------
+
+    private void SetBusy(bool busy)
     {
-        bool ready = !string.IsNullOrEmpty(IsoPathBox.Text) && !string.IsNullOrEmpty(_selectedProfile);
-        ContinueButton.IsEnabled = ready;
-
-        if (ready)
-            FooterHint.Text = "Listo para continuar";
+        SelectIsoButton.IsEnabled = !busy;
+        AnalyzeButton.IsEnabled = !busy && (_iso?.ImageFound ?? false);
+        EditionCombo.IsEnabled = !busy && EditionCombo.Items.Count > 0;
     }
 
-    private void Log(string message)
+    private void ResetImageInfo()
     {
-        LogBox.AppendText($"{message}{Environment.NewLine}");
-        LogBox.CaretIndex = LogBox.Text.Length;
-        LogScroller.ScrollToEnd();
+        _imageInfo = null;
+        InfoOs.Text = "--";
+        InfoVersion.Text = "--";
+        InfoBuild.Text = "--";
+        InfoArch.Text = "--";
+        InfoLang.Text = "--";
+        InfoType.Text = "--";
+
+        EditionCombo.ItemsSource = null;
+        EditionCombo.Items.Clear();
+        EditionCombo.IsEnabled = false;
+        ContinueButton.IsEnabled = false;
     }
+
+    private void PopulateImageInfo(ImageInfo info)
+    {
+        InfoOs.Text = Dash(info.OperatingSystem);
+        InfoVersion.Text = Dash(info.DisplayVersion);
+        InfoBuild.Text = Dash(info.Build);
+        InfoArch.Text = info.Architecture == ImageArchitecture.Unknown
+            ? "--"
+            : info.Architecture.ToString().ToLowerInvariant();
+        InfoLang.Text = Dash(info.Language);
+        InfoType.Text = info.Format == ImageFormat.Unknown
+            ? "--"
+            : info.Format.ToString().ToUpperInvariant();
+
+        EditionCombo.ItemsSource = info.Editions;
+        EditionCombo.DisplayMemberPath = nameof(ImageEdition.Name);
+        EditionCombo.SelectedIndex = -1;
+        EditionCombo.IsEnabled = info.Editions.Count > 0;
+    }
+
+    private static string Dash(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "--" : value;
 }
