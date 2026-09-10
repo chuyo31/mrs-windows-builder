@@ -1,71 +1,90 @@
-# Resultado - P2: Análisis REAL de la ISO (fase de solo lectura)
+# Resultado - P3: Inventario de la imagen Windows (SOLO LECTURA)
 
 ## Archivos creados / modificados
 
-### MRS.DismEngine (biblioteca)
-Creados:
-- `Logging/LogLevel.cs` — niveles `Info` / `Warn` / `Error` / `Dism`.
-- `Logging/LogEntry.cs` — línea de log; `ToString()` → `[NIVEL] mensaje`.
-- `Logging/IAppLogger.cs` — sistema de logging reutilizable (evento `Entry`).
-- `Logging/AppLogger.cs` — implementación + `NullAppLogger`.
-- `Processes/ProcessRunResult.cs` — resultado de proceso (stdout, stderr, ExitCode, duración, timeout).
-- `Processes/IProcessRunner.cs` / `Processes/ProcessRunner.cs` — ejecutor robusto de procesos externos: captura asíncrona de stdout/stderr, código de salida, duración y tiempo máximo; nunca lanza por ExitCode ≠ 0.
-- `Dism/IDismRunner.cs` / `Dism/DismRunner.cs` — invocación controlada de `DISM.exe /English /Get-WimInfo` (con y sin `/Index`). Registra el comando como `[DISM]`; usa `ExitCode` como criterio de éxito (no el texto "ERROR").
-
-Eliminado: `Class1.cs`.
-`MRS.DismEngine.csproj` sin cambios de dependencias.
-
-### MRS.ImageEngine (biblioteca)
-Creados:
-- `Models/ImageFormat.cs` — `Unknown` / `Wim` / `Esd`.
-- `Models/ImageArchitecture.cs` — `Unknown` / `X86` / `X64` / `Arm64`.
-- `Models/ImageEdition.cs` — índice, nombre, descripción, arquitectura, versión, build, idioma, edición.
-- `Models/ImageInfo.cs` — SO, versión comercial, versión cruda, build, arquitectura, idioma, formato y lista de ediciones.
-- `Parsing/ImageFormatDetector.cs` — WIM/ESD por extensión.
-- `Parsing/WindowsVersionResolver.cs` — deriva "Windows 10/11" y la versión comercial ("26H2", "24H2"…) a partir del nº de build; devuelve `null` si no reconoce la build (no inventa valores).
-- `Parsing/DismWimInfoParser.cs` — parser genérico `clave : valor` de la salida `/English`, independiente del orden y del idioma de Windows; maneja líneas de continuación (`Languages :`).
-- `Iso/IIsoMounter.cs` / `Iso/IsoMounter.cs` — montaje temporal de la ISO como unidad **de solo lectura** vía `Mount-DiskImage` / `Dismount-DiskImage`; se desmonta siempre al liberar.
-- `Iso/IsoInspectionResult.cs` — resultado de localizar `sources\install.wim|esd`.
-- `ImageService.cs` — orquestador `MainWindow → ImageService → DismRunner → DISM.exe`.
-- `ImageAnalysisException.cs` — conserva el `ExitCode` de DISM.
-
-Eliminado: `Class1.cs`.
-`MRS.ImageEngine.csproj` — añadida referencia a `MRS.DismEngine`.
-
-### MRS.WindowsBuilder (app)
+### MRS.DismEngine
 Modificados:
-- `MainWindow.xaml.cs` — sin lógica DISM: construye `ImageService` y delega. "Seleccionar ISO" comprueba existencia + monta/localiza la imagen; "Analizar imagen" ejecuta el análisis; el `ComboBox` de ediciones habilita "Continuar" y registra la edición elegida. El log de la UI se alimenta del `IAppLogger` (`[INFO]/[WARN]/[ERROR]/[DISM]`).
-- `MainWindow.xaml` — `SelectionChanged` en el `ComboBox` de edición.
-- `MRS.WindowsBuilder.csproj` — referencias a `MRS.ImageEngine` y `MRS.DismEngine`.
+- `Dism/IDismRunner.cs` / `Dism/DismRunner.cs` — nuevas operaciones (todas con
+  `/English`): `GetMountedImageInfoAsync`, `MountImageAsync` (`/Mount-Image` +
+  `/ReadOnly`), `UnmountImageDiscardAsync` (`/Unmount-Image /Discard`),
+  `GetPackagesAsync`, `GetFeaturesAsync`, `GetCapabilitiesAsync`,
+  `GetProvisionedAppxPackagesAsync`, `GetDriversAsync`. Timeouts diferenciados
+  (montaje 20 min, desmontaje 15 min, consultas 5 min). No hay ningún comando de
+  limpieza (`/StartComponentCleanup`, `/ResetBase`, `/Cleanup-Mountpoints`).
 
-### tests/MRS.ImageEngine.Tests (nuevo proyecto, xUnit)
-- `MRS.ImageEngine.Tests.csproj` (añadido a la solución).
-- `Data/DismOutputs.cs` — salidas de DISM `/English` reproducidas (ninguna prueba usa una ISO real).
-- `Fakes/FakeDismRunner.cs` — `IDismRunner` controlado (salidas y códigos de salida predefinidos).
-- `DismWimInfoParserTests.cs`, `ImageFormatDetectorTests.cs`, `WindowsVersionResolverTests.cs`, `ImageServiceTests.cs`.
+### MRS.ImageEngine
+Creados:
+- `Models/ImagePackage.cs` — PackageIdentity, State, ReleaseType, InstallTime, Description.
+- `Models/ImageFeature.cs` — Name, State.
+- `Models/ImageCapability.cs` — Identity, State.
+- `Models/ProvisionedApp.cs` — DisplayName, PackageName, Version, Architecture, ResourceId, PublisherId.
+- `Models/ImageDriver.cs` — PublishedName, OriginalFileName, Provider, Class, Version, Date, BootCritical.
+- `Models/ImageInventory.cs` — Packages, Features, Capabilities, ProvisionedApps, Drivers + contadores. Independiente de la interfaz.
+- `Parsing/DismBlockReader.cs` — lector genérico `clave : valor` de la salida `/English`: tolerante a orden distinto, campos opcionales, líneas vacías, múltiples elementos y continuaciones de línea; descarta el banner de DISM.
+- `Parsing/DismInventoryParsers.cs` — `DismPackageParser`, `DismFeatureParser`, `DismCapabilityParser`, `DismProvisionedAppParser` (deriva `PublisherId` del `PackageName` si falta), `DismDriverParser`.
+- `Inventory/InventoryWorkspace.cs` — workspace temporal único por operación en `%LOCALAPPDATA%\MRS-Windows-Builder\workspaces\<GUID>\` con `source\ mount\ logs\ output\`. Sin letras de unidad fijas. Comprueba que está libre; se puede eliminar entero.
+- `Inventory/InventoryResult.cs` — inventario + ruta del workspace + si se conservó.
+- `Inventory/ImageInventoryService.cs` — coordinador del inventario.
 
-## Funcionalidad implementada
+### MRS.WindowsBuilder
+Modificados:
+- `MainWindow.xaml` — pantalla de **INVENTARIO** superpuesta: contadores
+  (Paquetes / Apps / Features / Capabilities / Drivers), lista de categorías,
+  `DataGrid` (Nombre / Estado / Detalles) y botones **Volver** / **Continuar**.
+- `MainWindow.xaml.cs` — "Continuar" llama a `ImageInventoryService.BuildInventoryFromIsoAsync`;
+  rellena la pantalla de inventario y permite cambiar de categoría. "Continuar"
+  dentro del inventario NO modifica nada (solo registra en el log). Sin lógica
+  DISM en la ventana.
 
-- **Seleccionar ISO**: solo `.iso`; comprueba que el archivo existe; monta la ISO
-  (solo lectura), localiza `sources\install.wim` **o** `sources\install.esd`,
-  desmonta y, si no hay ninguno, muestra error claro. Habilita "Analizar imagen".
-- **Analizar imagen**: monta la ISO, ejecuta `DISM /English /Get-WimInfo` (listado
-  + un `/Index:N` por edición), parsea y desmonta. Obtiene: nombre del sistema,
-  versión comercial, versión y build, arquitectura, idioma, tipo WIM/ESD, índices
-  disponibles y nombre/descripción de cada edición. Ninguno de estos valores está
-  quemado en el código: todos salen de DISM (la versión comercial se deriva del nº
-  de build).
-- **Interfaz**: la tarjeta "Información de la imagen" se rellena tras el análisis;
-  el `ComboBox` "Edición" se puebla con las ediciones; al elegir una se habilita
-  "Continuar" y se registra en el log.
-- **Errores**: si DISM falla, la UI muestra "No se ha podido analizar la imagen."
-  y el registro añade `[ERROR] DISM no pudo analizar la imagen.` +
-  `[ERROR] Código: XXXXX` (el código de salida no se oculta).
-- **Logging**: `IAppLogger` reutilizable con `[INFO] [WARN] [ERROR] [DISM]`; la UI
-  muestra los mensajes importantes y el comando DISM ejecutado.
-- **Diseño a futuro**: modelos y parser preparados para ISO/WIM/ESD, Windows 10 y
-  11, x86/x64/ARM64 y múltiples ediciones; no hay código específico de "Windows 11
-  Pro 26H2".
+### tests/MRS.ImageEngine.Tests
+- `Fakes/FakeDismRunner.cs` — ampliado a toda la interfaz `IDismRunner`.
+- `Data/DismOutputs.cs` — salidas `/English` reproducidas de `/Get-Packages`,
+  `/Get-Features`, `/Get-Capabilities`, `/Get-ProvisionedAppxPackages`,
+  `/Get-Drivers` y `/Get-MountedImageInfo`.
+- `InventoryParsersTests.cs`, `ImageInventoryServiceTests.cs`, `InventoryWorkspaceTests.cs`.
+
+## Arquitectura implementada
+
+```
+MainWindow
+   ↓
+ImageInventoryService      (coordina)
+   ↓
+DismRunner                 (ejecuta DISM)
+   ↓
+DISM.exe
+```
+
+Flujo de `BuildInventoryAsync` con patrón `try / finally`:
+
+1. `[INFO] Creando workspace...` — workspace único con GUID + subdirectorios.
+2. Comprobación de montajes DISM previos; recuperación **controlada** solo de
+   montajes huérfanos que cuelguen de nuestra carpeta de workspaces (nunca se
+   tocan montajes de otros programas).
+3. `[INFO] Montando imagen índice X...` → `DISM /Mount-Image ... /ReadOnly`.
+4. Inventario secuencial: `[INFO] Inventariando paquetes/características/capacidades/aplicaciones/drivers...`.
+5. `finally`: `[INFO] Desmontando imagen...` → `/Unmount-Image /Discard`, y se
+   **verifica** con `/Get-MountedImageInfo` que ya no aparece montada.
+6. Si todo fue bien, el workspace se elimina. Si hubo error, se conserva como
+   workspace de diagnóstico y se informa de su ruta en el log
+   (`[ERROR] ... Workspace de diagnóstico conservado en: ...`).
+
+Errores de DISM: `[ERROR] Inventario de <fase> fallido.` + `[ERROR] Código DISM: XXXXX`
+(el código no se oculta; el usuario sabe qué fase falló).
+
+## Qué información se puede inventariar
+
+| Categoría   | Origen DISM                     | Campos |
+|-------------|----------------------------------|--------|
+| Paquetes    | `/Get-Packages`                  | Package Identity, State, Release Type, Install Time, Description (si está) |
+| Features    | `/Get-Features`                  | Feature Name, State |
+| Capabilities| `/Get-Capabilities`             | Capability Identity, State |
+| Apps prov.  | `/Get-ProvisionedAppxPackages`  | DisplayName, PackageName, Version, Architecture, ResourceId, PublisherId |
+| Drivers     | `/Get-Drivers`                  | Published Name, Original File Name, Provider, Class, Version, Date, Boot Critical |
+
+Servicios y tareas programadas: **no** se inventarían en esta fase (requerirían
+cargar hives de registro o modificar la imagen). Quedan preparados para más
+adelante.
 
 ## Resultado de `dotnet build`
 
@@ -82,34 +101,32 @@ Compilación correcta.
 
 ```
 dotnet test MRS-Windows-Builder.sln
-Correctas! - Con error: 0, Superado: 50, Omitido: 0, Total: 50 - MRS.ImageEngine.Tests.dll (net8.0)
+Correctas! - Con error: 0, Superado: 74, Omitido: 0, Total: 74 - MRS.ImageEngine.Tests.dll (net8.0)
 ```
 
-Cobertura de los tests:
-- parseo de información de WIM (campos base, arquitectura, versión/build, idioma en
-  línea normal y en línea de continuación, uso de *fallbacks*);
-- múltiples índices (listado de 1 y de 2 ediciones, orden preservado);
-- detección WIM/ESD por ruta (incluye mayúsculas y rutas sin extensión / nulas);
-- errores de DISM y **códigos de salida** (fallo en el listado, fallo en el
-  detalle, *timeout*, salida sin índices);
-- arquitectura (`x64`, `amd64`, `x86`, `i386`, `ARM64`, vacío, desconocida);
-- versión/build (`ExtractBuildNumber`, nombre de producto y versión comercial por
-  build, `null` para builds no reconocidas).
+Nuevas pruebas (24) para: modelos de inventario y contadores; parseo de
+paquetes, features, capabilities, apps (con `PublisherId` derivado) y drivers
+(incl. `Boot Critical`); salida vacía / sin banner; tolerancia a orden distinto y
+campos opcionales; workspace (creación de subdirectorios, unicidad, borrado);
+`ImageInventoryService` (inventario completo, montaje `/ReadOnly` + desmontaje en
+orden, propagación del `ExitCode` de DISM al fallar el montaje, conservación del
+workspace y desmontaje cuando falla una categoría, recuperación solo de montajes
+huérfanos propios). Ningún test usa una ISO real.
 
 ## Problemas encontrados
 
-- El primer `dotnet build` falló solo porque una instancia de la app abierta en
-  la fase P1 mantenía bloqueado `MRS.WindowsBuilder.exe`. Se cerró el proceso y la
-  compilación quedó limpia. No es un error de código.
-- DISM no expone directamente el nombre comercial ("Windows 11") ni la versión
-  comercial ("26H2"); se derivan del número de build mediante una tabla en
-  `WindowsVersionResolver`. Si aparece una build no mapeada, el campo se muestra
-  como `--` en lugar de inventarse.
-- El montaje/desmontaje de ISO (`IsoMounter`) usa PowerShell y requiere Windows
-  real; no se cubre con tests unitarios por decisión del propio prompt
-  (no crear tests que necesiten una ISO real).
+- Como en fases anteriores, el primer `dotnet build` puede fallar si queda una
+  instancia de la app abierta bloqueando el `.exe`; se resuelve cerrándola.
+- `/Get-ProvisionedAppxPackages` no siempre emite `PublisherId`; cuando falta se
+  deriva del último segmento del `PackageName` (`Nombre_Version_Arch_ResourceId_PublisherId`).
+- El montaje de la imagen requiere Windows real y privilegios de administrador;
+  no se cubre con tests unitarios (el prompt prohíbe usar una ISO real). La lógica
+  de montaje/desmontaje/recuperación sí está cubierta mediante `FakeDismRunner`.
+- Las imágenes ESD no pueden montarse con `DISM /Mount-Image`; el servicio lo
+  detecta y devuelve un error claro (conversión a WIM en una fase posterior).
 
 ## Fuera de alcance (siguiente fase)
 
-Sin implementar: eliminación de componentes, perfiles, montaje del WIM,
-modificación de registro offline, compresión y creación de ISO.
+Sin implementar: eliminación de componentes, perfiles Normal/Light/Medium/Ultra,
+modificaciones de registro, limpieza de componentes, compresión, creación de ISO,
+integración de PCPI y App Packs.

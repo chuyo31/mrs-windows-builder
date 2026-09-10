@@ -7,7 +7,7 @@ namespace MRS.DismEngine.Dism;
 /// Implementación de <see cref="IDismRunner"/> sobre DISM.exe.
 ///
 /// Cadena de responsabilidad:
-///   ImageService  ->  DismRunner  ->  IProcessRunner  ->  DISM.exe
+///   ImageService / ImageInventoryService  ->  DismRunner  ->  IProcessRunner  ->  DISM.exe
 ///
 /// Se fuerza <c>/English</c> para que la salida sea estable independientemente
 /// del idioma de Windows. El comando ejecutado se registra en el log con el
@@ -15,7 +15,9 @@ namespace MRS.DismEngine.Dism;
 /// </summary>
 public sealed class DismRunner : IDismRunner
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan QueryTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MountTimeout = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan UnmountTimeout = TimeSpan.FromMinutes(15);
 
     private readonly IProcessRunner _processRunner;
     private readonly IAppLogger _logger;
@@ -29,17 +31,46 @@ public sealed class DismRunner : IDismRunner
     }
 
     public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, CancellationToken cancellationToken = default)
-        => ExecuteAsync($"/English /Get-WimInfo /WimFile:\"{imagePath}\"", cancellationToken);
+        => ExecuteAsync($"/English /Get-WimInfo /WimFile:\"{imagePath}\"", QueryTimeout, cancellationToken);
 
     public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, int index, CancellationToken cancellationToken = default)
-        => ExecuteAsync($"/English /Get-WimInfo /WimFile:\"{imagePath}\" /Index:{index}", cancellationToken);
+        => ExecuteAsync($"/English /Get-WimInfo /WimFile:\"{imagePath}\" /Index:{index}", QueryTimeout, cancellationToken);
 
-    private async Task<ProcessRunResult> ExecuteAsync(string arguments, CancellationToken cancellationToken)
+    public Task<ProcessRunResult> GetMountedImageInfoAsync(CancellationToken cancellationToken = default)
+        => ExecuteAsync("/English /Get-MountedImageInfo", QueryTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> MountImageAsync(
+        string imageFile, int index, string mountDir, bool readOnly = true,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync(
+            $"/English /Mount-Image /ImageFile:\"{imageFile}\" /Index:{index} /MountDir:\"{mountDir}\"" +
+            (readOnly ? " /ReadOnly" : string.Empty),
+            MountTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> UnmountImageDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Unmount-Image /MountDir:\"{mountDir}\" /Discard", UnmountTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> GetPackagesAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Packages", QueryTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> GetFeaturesAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Features", QueryTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> GetCapabilitiesAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Capabilities", QueryTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> GetProvisionedAppxPackagesAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-ProvisionedAppxPackages", QueryTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> GetDriversAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Drivers", QueryTimeout, cancellationToken);
+
+    private async Task<ProcessRunResult> ExecuteAsync(string arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         _logger.Dism($"{_dismPath} {arguments}");
 
         var result = await _processRunner
-            .RunAsync(_dismPath, arguments, cancellationToken, DefaultTimeout)
+            .RunAsync(_dismPath, arguments, cancellationToken, timeout)
             .ConfigureAwait(false);
 
         _logger.Dism($"ExitCode={result.ExitCode} Duracion={result.Duration.TotalSeconds:0.0}s");

@@ -42,39 +42,40 @@ varias bibliotecas de motor:
 | `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
-`MRS.DismEngine` e `MRS.ImageEngine` ya están implementados para la fase de
-análisis (solo lectura). El resto de bibliotecas siguen siendo **stubs** y se
-irán implementando en pasos posteriores.
+`MRS.DismEngine` e `MRS.ImageEngine` ya están implementados para las fases de
+análisis e inventario (solo lectura). El resto de bibliotecas siguen siendo
+**stubs** y se irán implementando en pasos posteriores.
 
 ---
 
-## Estado actual — P2
+## Estado actual — P3
 
-Análisis **real** de la ISO, 100% lectura
+Inventario de SOLO LECTURA de la imagen seleccionada
 (ver [`prompts/03-resultado.md`](prompts/03-resultado.md)).
 
 **Funciona:**
 
-- UI dark theme estilo Windows 11 (azul eléctrico, bordes redondeados, sombras
-  suaves, Segoe UI, ventana ~1200×720) con log `[INFO] [WARN] [ERROR] [DISM]`.
-- **Seleccionar ISO**: solo `.iso`, comprueba que existe, monta la ISO como
-  unidad de solo lectura, localiza `sources\install.wim` o `install.esd` y
-  desmonta. Error claro si no hay imagen.
-- **Analizar imagen**: `MainWindow → ImageService → DismRunner → DISM.exe`.
-  Ejecuta `DISM /English /Get-WimInfo` (listado + un `/Index:N` por edición) y
-  obtiene sistema, versión comercial, versión/build, arquitectura, idioma, tipo
-  WIM/ESD y todas las ediciones (índice + nombre + descripción). Los valores
-  salen de DISM, no están quemados.
-- Tarjeta **Información de la imagen** rellenada tras el análisis; `ComboBox`
-  "Edición" poblado; al elegir una edición se habilita **Continuar**.
-- Manejo de errores de DISM sin ocultar el código de salida.
-- Ejecutor de procesos externos robusto y sistema de logging reutilizable.
-- Modelos y parser preparados para ISO/WIM/ESD, Windows 10/11 y x86/x64/ARM64.
+- UI dark theme estilo Windows 11 con log `[INFO] [WARN] [ERROR] [DISM]`.
+- **Seleccionar ISO** → monta la ISO (solo lectura), localiza
+  `sources\install.wim` o `install.esd` y desmonta.
+- **Analizar imagen** → `DISM /English /Get-WimInfo`: sistema, versión comercial,
+  versión/build, arquitectura, idioma, tipo WIM/ESD y todas las ediciones.
+- **Continuar** → pantalla de **INVENTARIO** de la edición elegida:
+  `MainWindow → ImageInventoryService → DismRunner → DISM.exe`.
+  - Workspace temporal único (`%LOCALAPPDATA%\MRS-Windows-Builder\workspaces\<GUID>\`).
+  - Monta el índice con `DISM /Mount-Image ... /ReadOnly`, inventaría y
+    **desmonta siempre** (`/Unmount-Image /Discard`, con verificación).
+  - Inventaría: paquetes, características, capacidades, apps provisionadas y
+    drivers. Contadores + tabla por categoría (Nombre / Estado / Detalles).
+  - Si algo falla: se intenta desmontar, se conserva el workspace de diagnóstico
+    y el log indica la fase y el código DISM.
+  - No ejecuta ningún `cleanup` (`/StartComponentCleanup`, `/ResetBase`,
+    `/Cleanup-Mountpoints`).
 
 **Todavía NO hace:**
 
-- Montaje del WIM, eliminación de componentes, perfiles, registro offline.
-- Compresión ni generación de la ISO final.
+- Eliminación de componentes, perfiles Normal/Light/Medium/Ultra, registro offline.
+- Limpieza de componentes, compresión, creación de ISO, PCPI ni App Packs.
 
 ---
 
@@ -102,13 +103,13 @@ MRS-Windows-Builder.sln
 src/
   MRS.WindowsBuilder/     App WPF (MainWindow.xaml / .xaml.cs)
   MRS.DismEngine/         Procesos externos, logging e invocación de DISM
-  MRS.ImageEngine/        Modelos, parser de DISM, montaje de ISO, ImageService
+  MRS.ImageEngine/        Modelos, parsers de DISM, montaje de ISO, ImageService, ImageInventoryService
   MRS.ISOEngine/          (stub)
   MRS.ComponentCatalog/   (stub)
   MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
 tests/
-  MRS.ImageEngine.Tests/  Tests xUnit (parser, formato, versión, ImageService)
+  MRS.ImageEngine.Tests/  Tests xUnit (parsers, análisis, inventario, workspace)
 prompts/                  Prompts de desarrollo y resultados por paso
 app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 ```
@@ -119,7 +120,7 @@ app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 
 - [x] **P1** – Primera interfaz funcional (selección de ISO, perfiles, log).
 - [x] **P2** – `MRS.DismEngine` + `MRS.ImageEngine`: análisis real de la imagen (solo lectura) y listado de ediciones.
-- [ ] **P3** – `MRS.ISOEngine` / `MRS.DismEngine`: montaje y modificación.
+- [x] **P3** – Inventario de SOLO LECTURA (montar → inspeccionar → desmontar): paquetes, features, capabilities, apps provisionadas y drivers.
 - [ ] **P4** – `MRS.ProfileEngine` + `MRS.ComponentCatalog`: aplicación de perfiles.
 - [ ] **P5** – `MRS.PostInstall`: tweaks y post-instalación.
 - [ ] **P6** – Regeneración de la ISO final.

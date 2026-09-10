@@ -353,5 +353,92 @@
                         Padding="28,10" Click="ContinueButton_Click"/>
             </Grid>
         </Border>
+
+        <!-- ================= Pantalla de inventario (fase 3) ================= -->
+        <Grid x:Name="InventoryOverlay" Grid.Row="0" Grid.RowSpan="4"
+              Background="{StaticResource AppBackground}" Visibility="Collapsed" Panel.ZIndex="30">
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Cabecera -->
+                <TextBlock Grid.Row="0" Text="INVENTARIO DE LA IMAGEN" Foreground="{StaticResource TextPrimary}"
+                           FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <TextBlock Grid.Row="0" x:Name="InventorySubtitle" HorizontalAlignment="Right"
+                           Foreground="{StaticResource TextSecondary}" FontSize="12" Text="--"/>
+
+                <!-- Contadores -->
+                <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,12,0,12" Padding="16,12">
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0,0,28,0">
+                            <TextBlock Text="Paquetes" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="CountPackages" Text="0" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,28,0">
+                            <TextBlock Text="Apps" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="CountApps" Text="0" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,28,0">
+                            <TextBlock Text="Features" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="CountFeatures" Text="0" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,28,0">
+                            <TextBlock Text="Capabilities" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="CountCapabilities" Text="0" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Drivers" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="CountDrivers" Text="0" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Categorías + lista -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="200"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="8">
+                        <ListBox x:Name="CategoryList" BorderThickness="0" Background="Transparent"
+                                 Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                 SelectionChanged="CategoryList_SelectionChanged">
+                            <ListBoxItem Content="Paquetes"/>
+                            <ListBoxItem Content="Apps"/>
+                            <ListBoxItem Content="Features"/>
+                            <ListBoxItem Content="Capabilities"/>
+                            <ListBoxItem Content="Drivers"/>
+                        </ListBox>
+                    </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource Card}" Margin="10,0,0,0" Padding="4">
+                        <DataGrid x:Name="InventoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  Background="Transparent" RowBackground="Transparent"
+                                  BorderThickness="0" Foreground="{StaticResource TextPrimary}"
+                                  FontSize="12">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Nombre" Binding="{Binding Name}" Width="2*"/>
+                                <DataGridTextColumn Header="Estado" Binding="{Binding State}" Width="Auto" MinWidth="110"/>
+                                <DataGridTextColumn Header="Detalles" Binding="{Binding Details}" Width="3*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+                </Grid>
+
+                <!-- Acciones -->
+                <Grid Grid.Row="3" Margin="0,16,0,0">
+                    <Button x:Name="InventoryBackButton" Content="Volver" HorizontalAlignment="Left"
+                            Style="{StaticResource OutlineButton}" Padding="24,10" Click="InventoryBackButton_Click"/>
+                    <Button x:Name="InventoryNextButton" Content="Continuar" HorizontalAlignment="Right"
+                            Style="{StaticResource AccentButton}" Padding="28,10" Click="InventoryNextButton_Click"/>
+                </Grid>
+            </Grid>
+        </Grid>
     </Grid>
 </Window>
