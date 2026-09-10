@@ -130,3 +130,67 @@ huérfanos propios). Ningún test usa una ISO real.
 Sin implementar: eliminación de componentes, perfiles Normal/Light/Medium/Ultra,
 modificaciones de registro, limpieza de componentes, compresión, creación de ISO,
 integración de PCPI y App Packs.
+
+---
+
+## Corrección posterior a prueba real (P3.1)
+
+### Causa del error 740
+
+En la prueba con una ISO real de Windows 11 26H2 Pro, la ISO se montaba bien
+pero DISM devolvía:
+
+```
+[DISM] ExitCode=740
+ERROR_ELEVATION_REQUIRED
+```
+
+`DISM /Get-WimInfo` (y el resto de operaciones DISM) requieren un proceso
+**elevado**. `MRS.WindowsBuilder` se ejecutaba sin privilegios de administrador,
+por lo que DISM abortaba con el código 740 antes de leer nada.
+
+### Solución aplicada
+
+- Nuevo `src/MRS.WindowsBuilder/app.manifest` con
+  `<requestedExecutionLevel level="requireAdministrator" />`. Se referencia
+  desde `MRS.WindowsBuilder.csproj` (`<ApplicationManifest>app.manifest</ApplicationManifest>`).
+  Al arrancar, Windows muestra el UAC si el proceso no está ya elevado. No se
+  desactiva UAC ni se usan métodos de auto-elevación inseguros.
+- La elevación es **a nivel de aplicación**, no por comando. `DismRunner` no
+  cambia y sigue siendo independiente de la interfaz; `MainWindow` no contiene
+  lógica de elevación.
+- El manifiesto añade además compatibilidad declarada con Windows 10/11 y
+  *DPI awareness* PerMonitorV2.
+- Legibilidad de botones (`AccentButton` / `OutlineButton`):
+  - Habilitados: texto casi blanco (`#FFF2F4F8` / blanco), mismo contraste que
+    los títulos "Windows Builder", "Origen" e "Información de la imagen".
+  - Deshabilitados: se mantiene el estado *disabled* pero con texto legible
+    (`#FFC6CDD9`) y superficie/borde con más contraste
+    (`#FF454B5A` / `#FF525A6B`), en lugar del gris casi invisible anterior.
+  - No se ha tocado el diseño general.
+
+### Resultado de `dotnet build`
+
+```
+Compilación correcta.
+    0 Advertencia(s)
+    0 Errores
+```
+
+Manifiesto verificado como embebido en `MRS.WindowsBuilder.exe`.
+
+### Resultado de `dotnet test`
+
+```
+Correctas! - Con error: 0, Superado: 74, Omitido: 0, Total: 74
+```
+
+### Resultado de la prueba real
+
+_(A completar por el usuario ejecutando la app ya elevada con la ISO real de
+Windows 11 26H2.)_ Comprobaciones esperadas: `/Get-WimInfo` ya no devuelve 740;
+la tarjeta muestra `Windows 11` / `26H2` / `26300.9278` / `x64` / `es-ES` / `WIM`;
+aparecen las ediciones (Home / Pro); y no queda ningún montaje de ISO abierto.
+
+Nota: en esta corrección **no** se ha modificado ni montado el WIM; el alcance se
+limita a la elevación del análisis inicial.

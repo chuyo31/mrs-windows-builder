@@ -26,6 +26,11 @@
         <SolidColorBrush x:Key="TextSecondary" Color="#FF9AA3B2"/>
         <SolidColorBrush x:Key="FieldBackground" Color="#FF12141A"/>
         <SolidColorBrush x:Key="Disabled" Color="#FF3A3F4B"/>
+        <!-- Superficie y texto para botones deshabilitados: sigue leyéndose como disabled
+             pero con contraste suficiente (no gris casi invisible). -->
+        <SolidColorBrush x:Key="DisabledSurface" Color="#FF454B5A"/>
+        <SolidColorBrush x:Key="DisabledBorder" Color="#FF525A6B"/>
+        <SolidColorBrush x:Key="DisabledText" Color="#FFC6CDD9"/>
 
         <!-- ============ Sombra suave para tarjetas ============ -->
         <DropShadowEffect x:Key="CardShadow" BlurRadius="24" ShadowDepth="0"
@@ -84,8 +89,8 @@
                                 <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentPressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Disabled}"/>
-                                <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource DisabledSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource DisabledText}"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -114,8 +119,9 @@
                                 <Setter TargetName="bd" Property="Background" Value="#FF1A1D26"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{StaticResource Disabled}"/>
-                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Disabled}"/>
+                                <Setter Property="Foreground" Value="{StaticResource DisabledText}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource DisabledBorder}"/>
+                                <Setter TargetName="bd" Property="Background" Value="#FF1B1E27"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
