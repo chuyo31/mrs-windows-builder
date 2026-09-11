@@ -38,46 +38,50 @@ varias bibliotecas de motor:
 | `MRS.ISOEngine` | `net8.0` | Montaje/extracción y regeneración de la ISO. |
 | `MRS.ImageEngine` | `net8.0` | Lectura de metadatos de la imagen (WIM/ESD), ediciones. |
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
-| `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes/apps eliminables. |
+| `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
 | `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
-`MRS.DismEngine` e `MRS.ImageEngine` ya están implementados para las fases de
-análisis e inventario (solo lectura). El resto de bibliotecas siguen siendo
-**stubs** y se irán implementando en pasos posteriores.
+`MRS.DismEngine`, `MRS.ImageEngine` y `MRS.ComponentCatalog` ya están
+implementados (análisis, inventario real y catálogo, todo de solo lectura).
+El resto de bibliotecas siguen siendo **stubs** y se irán implementando en
+pasos posteriores.
 
 ---
 
-## Estado actual — P4
+## Estado actual — P5
 
-Inventario **real** de SOLO LECTURA de la imagen seleccionada: montar → leer →
-desmontar (ver [`prompts/04-resultado.md`](prompts/04-resultado.md)).
+Catálogo inteligente de componentes, clasificado y protegido, a partir del
+inventario real (ver [`prompts/05-resultado.md`](prompts/05-resultado.md)).
 
 **Funciona:**
 
-- UI dark theme estilo Windows 11 con log `[INFO] [WARN] [ERROR] [DISM]`.
-- **Seleccionar ISO** → monta la ISO (solo lectura), localiza
-  `sources\install.wim` o `install.esd` y desmonta.
-- **Analizar imagen** → `DISM /English /Get-WimInfo`: sistema, versión comercial,
-  versión/build, arquitectura, idioma, tipo WIM/ESD y todas las ediciones.
-- **Continuar** → pantalla de **INVENTARIO** de la edición elegida:
-  `MainWindow → ImageInventoryService → DismRunner → DISM.exe`.
-  - Workspace temporal único (`%LOCALAPPDATA%\MRS-Windows-Builder\workspaces\<GUID>\`).
-  - Comprueba montajes previos (`/Get-MountedWimInfo`) y recupera solo los
-    huérfanos propios.
-  - Monta el índice elegido con `DISM /Mount-Wim ... /ReadOnly`, inventaría y
-    **desmonta siempre** (`/Unmount-Wim /Discard`), luego verifica con
-    `/Get-MountedWimInfo` que no queda ningún montaje.
-  - Inventaría: paquetes, características, capacidades, apps provisionadas y
-    drivers. Contadores + tabla por categoría (Nombre / Estado / Detalles).
-  - Si algo falla: se intenta desmontar, se conserva el workspace de diagnóstico
-    y el log indica la fase y el código DISM.
-  - No ejecuta ningún `cleanup` (`/StartComponentCleanup`, `/ResetBase`,
-    `/Cleanup-Mountpoints`).
+- UI dark theme estilo Windows 11 con log `[INFO] [WARN] [ERROR] [DISM]`; `DataGrid`
+  y listas con tema oscuro completo (sin el chrome blanco por defecto de WPF).
+- **Seleccionar ISO → Analizar imagen → elegir edición → Continuar**: pantalla
+  de **INVENTARIO** real (`ImageInventoryService`: monta el índice elegido con
+  `/Mount-Wim /ReadOnly`, inventaría paquetes/features/capabilities/apps/drivers
+  y **desmonta siempre**, verificando con `/Get-MountedWimInfo`).
+- **Continuar** desde el inventario → pantalla **COMPONENTES**:
+  `ImageInventory → CatalogClassifier → ProtectionEngine → DependencyResolver`.
+  - Clasifica cada paquete/AppX/feature/capability/driver detectado en una
+    categoría (Gaming, Application, AI, Communication, Store, Framework,
+    Security, WindowsUpdate, Networking, Printing, Media, Language...).
+  - Protege con reglas específicas y revisables (Servicing Stack, CBS, SSU,
+    LCU, Windows Update, Defender, Microsoft Store, Windows Installer, WinRE,
+    Wi-Fi/Ethernet/Bluetooth, USB, audio, impresión, VCLibs, UI.Xaml, .NET,
+    paquete base del sistema, idioma, OOBE), cada una con motivo explicado.
+  - Primera estructura de dependencias (p. ej. apps AppX → frameworks
+    compartidos como VCLibs/UI.Xaml).
+  - UI: buscador, filtro por categoría/protección/riesgo, casillas de
+    selección (bloqueadas y con 🔒 para los componentes protegidos) y panel de
+    detalle. **No modifica el WIM** ni ejecuta DISM: solo clasifica.
+  - Reglas externalizadas en `catalog/win11/*.json` (Part 10), con un conjunto
+    embebido equivalente usado por defecto.
 
 **Todavía NO hace:**
 
-- Eliminación de componentes, perfiles Normal/Light/Medium/Ultra, registro offline.
+- Eliminación de componentes, perfiles Normal/Light/Medium/Ultra/Custom, registro offline.
 - Limpieza de componentes, compresión, creación de ISO, PCPI ni App Packs.
 
 ---
@@ -107,14 +111,16 @@ src/
   MRS.WindowsBuilder/     App WPF (MainWindow.xaml / .xaml.cs)
   MRS.DismEngine/         Procesos externos, logging e invocación de DISM
   MRS.ImageEngine/        Modelos, parsers de DISM, montaje de ISO, ImageService, ImageInventoryService
+  MRS.ComponentCatalog/   Clasificación, protección, dependencias, búsqueda/filtros del catálogo
   MRS.ISOEngine/          (stub)
-  MRS.ComponentCatalog/   (stub)
   MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
 tests/
-  MRS.ImageEngine.Tests/  Tests xUnit (parsers, análisis, inventario, workspace)
+  MRS.ImageEngine.Tests/      Tests xUnit (parsers, análisis, inventario, workspace)
+  MRS.ComponentCatalog.Tests/ Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
 prompts/                  Prompts de desarrollo y resultados por paso
-app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
+catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
+app-packs/  docs/  profiles/   (reservados, vacíos)
 ```
 
 ---
@@ -125,5 +131,6 @@ app-packs/  catalog/  docs/  profiles/   (reservados, vacíos)
 - [x] **P2** – `MRS.DismEngine` + `MRS.ImageEngine`: análisis real de la imagen (solo lectura) y listado de ediciones.
 - [x] **P3** – Inventario de SOLO LECTURA (montar → inspeccionar → desmontar): paquetes, features, capabilities, apps provisionadas y drivers.
 - [x] **P4** – Inventario **real** del WIM: `/Mount-Wim` del índice elegido, las 5 categorías vía DISM, `/Unmount-Wim /Discard` garantizado y verificación de que no quedan montajes.
-- [ ] **P5** – `MRS.ProfileEngine` + `MRS.ComponentCatalog`: aplicación de perfiles.
-- [ ] **P6** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.
+- [x] **P5** – `MRS.ComponentCatalog`: clasificación por categorías, protección de componentes críticos con motivo, dependencias, búsqueda/filtros y pantalla COMPONENTES. Sin eliminar nada todavía.
+- [ ] **P6** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom y motor de eliminación.
+- [ ] **P7** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.

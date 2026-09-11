@@ -327,6 +327,128 @@
             </Setter>
         </Style>
 
+        <!-- ============ Lista de categorías (tema oscuro) ============ -->
+        <Style x:Key="DarkListBoxItem" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="itemBd" Background="Transparent" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}" Margin="0,0,0,2">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="itemBd" Property="Background" Value="#FF232733"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="itemBd" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CategoryList" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkListBoxItem}"/>
+        </Style>
+
+        <!-- ============ DataGrid (tema oscuro completo) ============ -->
+        <Style x:Key="DarkDataGridHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#FF20232C"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,9"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridColumnHeader">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkDataGridCell" TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Accent}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DarkDataGridRow" TargetType="DataGridRow">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Validation.ErrorTemplate" Value="{x:Null}"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF20242E"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Accent}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DarkDataGrid" TargetType="DataGrid">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="RowBackground" Value="Transparent"/>
+            <Setter Property="AlternatingRowBackground" Value="#FF181B23"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="RowHeaderWidth" Value="0"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="CanUserResizeRows" Value="False"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="SelectionUnit" Value="FullRow"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="RowHeight" Value="30"/>
+            <Setter Property="ColumnHeaderStyle" Value="{StaticResource DarkDataGridHeader}"/>
+            <Setter Property="CellStyle" Value="{StaticResource DarkDataGridCell}"/>
+            <Setter Property="RowStyle" Value="{StaticResource DarkDataGridRow}"/>
+        </Style>
+
     </Window.Resources>
 
     <Grid>
@@ -543,8 +665,7 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="8">
-                        <ListBox x:Name="CategoryList" BorderThickness="0" Background="Transparent"
-                                 Foreground="{StaticResource TextPrimary}" FontSize="13"
+                        <ListBox x:Name="CategoryList" Style="{StaticResource CategoryList}"
                                  SelectionChanged="CategoryList_SelectionChanged">
                             <ListBoxItem Content="Paquetes"/>
                             <ListBoxItem Content="Apps"/>
@@ -555,11 +676,7 @@
                     </Border>
 
                     <Border Grid.Column="1" Style="{StaticResource Card}" Margin="10,0,0,0" Padding="4">
-                        <DataGrid x:Name="InventoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
-                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  Background="Transparent" RowBackground="Transparent"
-                                  BorderThickness="0" Foreground="{StaticResource TextPrimary}"
-                                  FontSize="12">
+                        <DataGrid x:Name="InventoryGrid" Style="{StaticResource DarkDataGrid}">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Nombre" Binding="{Binding Name}" Width="2*"/>
                                 <DataGridTextColumn Header="Estado" Binding="{Binding State}" Width="Auto" MinWidth="110"/>
@@ -575,6 +692,129 @@
                             Style="{StaticResource OutlineButton}" Padding="24,10" Click="InventoryBackButton_Click"/>
                     <Button x:Name="InventoryNextButton" Content="Continuar" HorizontalAlignment="Right"
                             Style="{StaticResource AccentButton}" Padding="28,10" Click="InventoryNextButton_Click"/>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- ================= Pantalla de componentes (fase 5) ================= -->
+        <Grid x:Name="ComponentsOverlay" Grid.Row="0" Grid.RowSpan="4"
+              Background="{StaticResource AppBackground}" Visibility="Collapsed" Panel.ZIndex="40">
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Cabecera -->
+                <StackPanel Grid.Row="0">
+                    <TextBlock Text="COMPONENTES" Foreground="{StaticResource TextPrimary}"
+                               FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock x:Name="ComponentsSummary" Foreground="{StaticResource TextSecondary}"
+                               FontSize="12" Text="--"/>
+                </StackPanel>
+
+                <!-- Búsqueda + filtro -->
+                <Grid Grid.Row="1" Margin="0,14,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="220"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="ComponentSearchBox" Style="{StaticResource PathBox}"
+                             IsReadOnly="False" Margin="0,0,10,0"
+                             Tag="🔍 Buscar componente..." TextChanged="ComponentSearchBox_TextChanged"/>
+                    <ComboBox x:Name="ComponentFilterCombo" Grid.Column="1"
+                              Style="{StaticResource EditionCombo}"
+                              SelectionChanged="ComponentFilterCombo_SelectionChanged"/>
+                </Grid>
+
+                <!-- Lista + detalle -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="320"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="4">
+                        <DataGrid x:Name="ComponentsGrid" Style="{StaticResource DarkDataGrid}"
+                                  SelectionChanged="ComponentsGrid_SelectionChanged">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="" Width="40">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          IsEnabled="{Binding Editable}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                <TextBlock Text="🔒" FontSize="11" HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{Binding LockVisibility}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Nombre" Binding="{Binding DisplayName}" Width="2*"/>
+                                <DataGridTextColumn Header="Categoría" Binding="{Binding CategoryLabel}" Width="1.2*"/>
+                                <DataGridTextColumn Header="Estado" Binding="{Binding StatusLabel}" Width="1.4*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <!-- Detalle del componente seleccionado -->
+                    <Border Grid.Column="1" Style="{StaticResource Card}" Margin="10,0,0,0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="ComponentDetailPanel">
+                                <TextBlock Text="Detalle" Style="{StaticResource CardTitle}"/>
+                                <TextBlock x:Name="DetailPlaceholder" Text="Selecciona un componente de la lista."
+                                           Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap"/>
+
+                                <StackPanel x:Name="DetailContent" Visibility="Collapsed">
+                                    <TextBlock x:Name="DetailName" Text="--" Foreground="{StaticResource TextPrimary}"
+                                               FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                    <TextBlock Text="Categoría" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailCategory" Text="--" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Estado" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailState" Text="--" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Riesgo" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailRisk" Text="--" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Protección" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailProtection" Text="--" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Origen" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailSource" Text="--" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Descripción" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailDescription" Text="--" Foreground="{StaticResource TextPrimary}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Motivo de protección" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailProtectionReason" Text="--" Foreground="{StaticResource TextPrimary}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Dependencias" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailDependencies" Text="--" Foreground="{StaticResource TextPrimary}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,2,0,10"/>
+
+                                    <TextBlock Text="Utilizado por" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="DetailDependents" Text="--" Foreground="{StaticResource TextPrimary}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+
+                <!-- Acciones -->
+                <Grid Grid.Row="3" Margin="0,16,0,0">
+                    <Button x:Name="ComponentsBackButton" Content="Volver" HorizontalAlignment="Left"
+                            Style="{StaticResource OutlineButton}" Padding="24,10" Click="ComponentsBackButton_Click"/>
+                    <Button x:Name="ComponentsContinueButton" Content="Continuar" HorizontalAlignment="Right"
+                            Style="{StaticResource AccentButton}" Padding="28,10" Click="ComponentsContinueButton_Click"/>
                 </Grid>
             </Grid>
         </Grid>

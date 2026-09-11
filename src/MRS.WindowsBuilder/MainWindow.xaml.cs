@@ -5,6 +5,9 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using MRS.ComponentCatalog;
+using MRS.ComponentCatalog.Models;
+using MRS.ComponentCatalog.Query;
 using MRS.DismEngine.Dism;
 using MRS.DismEngine.Logging;
 using MRS.DismEngine.Processes;
@@ -19,18 +22,39 @@ namespace MRS.WindowsBuilder;
 /// <summary>
 /// Interaction logic for MainWindow.xaml
 ///
-/// La ventana no contiene lógica DISM: delega en <see cref="ImageService"/> y
-/// <see cref="ImageInventoryService"/>.
+/// La ventana no contiene lógica DISM ni de catalogación: delega en
+/// <see cref="ImageService"/>, <see cref="ImageInventoryService"/> y
+/// <see cref="ComponentCatalogService"/>.
 /// </summary>
 public partial class MainWindow : Window
 {
+    private static readonly FilterOption[] FilterOptions =
+    {
+        new("Todos", CatalogFilterKind.All),
+        new("Protegidos", CatalogFilterKind.Protected),
+        new("Removibles", CatalogFilterKind.Removable),
+        new("Opcionales", CatalogFilterKind.Optional),
+        new("Críticos", CatalogFilterKind.Critical),
+        new("Aplicaciones", CatalogFilterKind.Applications),
+        new("Features", CatalogFilterKind.Features),
+        new("Capabilities", CatalogFilterKind.Capabilities),
+        new("Frameworks", CatalogFilterKind.Frameworks),
+        new("Gaming", CatalogFilterKind.Gaming),
+        new("Comunicación", CatalogFilterKind.Communication),
+        new("IA", CatalogFilterKind.AI),
+        new("Telemetría", CatalogFilterKind.Telemetry),
+    };
+
     private readonly AppLogger _logger = new();
     private readonly ImageService _imageService;
     private readonly ImageInventoryService _inventoryService;
+    private readonly ComponentCatalogService _catalogService = new();
 
     private IsoInspectionResult? _iso;
     private ImageInfo? _imageInfo;
     private ImageInventory? _inventory;
+    private ComponentCatalogResult? _catalog;
+    private List<ComponentRow> _allComponentRows = new();
     private string? _selectedProfile;
 
     public MainWindow()
@@ -296,7 +320,128 @@ public partial class MainWindow : Window
     }
 
     private void InventoryNextButton_Click(object sender, RoutedEventArgs e)
-        => _logger.Info("Inventario revisado. La siguiente fase (selección/limpieza) aún no está disponible.");
+    {
+        if (_inventory is null)
+            return;
+
+        // El catálogo solo clasifica: no ejecuta DISM ni modifica la imagen.
+        var catalog = _catalogService.BuildCatalog(_inventory);
+        _catalog = catalog;
+
+        _logger.Info($"Catálogo generado: {catalog.TotalCount} componentes " +
+                     $"({catalog.ProtectedCount} protegidos, {catalog.RemovableCount} removibles, " +
+                     $"{catalog.OptionalCount} opcionales, {catalog.CriticalCount} críticos).");
+
+        ShowComponents(catalog);
+    }
+
+    // ---- Pantalla de componentes (catálogo) --------------------------------
+
+    private void ShowComponents(ComponentCatalogResult catalog)
+    {
+        _catalog = catalog;
+
+        ComponentsSummary.Text =
+            $"{catalog.TotalCount} componentes · {catalog.ProtectedCount} protegidos · " +
+            $"{catalog.RemovableCount} removibles · {catalog.OptionalCount} opcionales · " +
+            $"{catalog.CriticalCount} críticos";
+
+        _allComponentRows = catalog.Components
+            .Select(c => new ComponentRow(c))
+            .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ComponentSearchBox.Text = string.Empty;
+
+        if (ComponentFilterCombo.ItemsSource is null)
+        {
+            ComponentFilterCombo.ItemsSource = FilterOptions;
+            ComponentFilterCombo.DisplayMemberPath = nameof(FilterOption.Label);
+        }
+        ComponentFilterCombo.SelectedIndex = 0;
+
+        RenderComponents();
+        ClearComponentDetail();
+
+        InventoryOverlay.Visibility = Visibility.Collapsed;
+        ComponentsOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Catálogo generado";
+    }
+
+    private void RenderComponents()
+    {
+        if (_catalog is null || ComponentsGrid is null)
+            return;
+
+        var filterKind = (ComponentFilterCombo.SelectedItem as FilterOption)?.Kind ?? CatalogFilterKind.All;
+        var filtered = CatalogQuery.Filter(_catalog.Components, filterKind);
+        filtered = CatalogQuery.Search(filtered, ComponentSearchBox.Text);
+
+        var filteredIds = filtered.Select(c => c.Id).ToHashSet();
+        ComponentsGrid.ItemsSource = _allComponentRows
+            .Where(row => filteredIds.Contains(row.Component.Id))
+            .ToList();
+    }
+
+    private void ComponentSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        => RenderComponents();
+
+    private void ComponentFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => RenderComponents();
+
+    private void ComponentsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ComponentsGrid.SelectedItem is ComponentRow row)
+            ShowComponentDetail(row.Component);
+        else
+            ClearComponentDetail();
+    }
+
+    private void ShowComponentDetail(ComponentDefinition component)
+    {
+        DetailPlaceholder.Visibility = Visibility.Collapsed;
+        DetailContent.Visibility = Visibility.Visible;
+
+        DetailName.Text = component.DisplayName.Length > 0 ? component.DisplayName : component.Name;
+        DetailCategory.Text = component.Category.ToString();
+        DetailState.Text = component.Superseded ? "Superseded" : component.Installed ? "Installed" : "No instalado";
+        DetailRisk.Text = component.Risk.ToString();
+        DetailProtection.Text = component.Protection.ToString();
+        DetailSource.Text = component.SourceType.ToString();
+        DetailDescription.Text = Dash(component.Description);
+        DetailProtectionReason.Text = Dash(component.ProtectionReason);
+
+        DetailDependencies.Text = JoinNames(_catalog?.DependenciesOf(component.Id));
+        DetailDependents.Text = JoinNames(_catalog?.DependentsOf(component.Id));
+    }
+
+    private void ClearComponentDetail()
+    {
+        DetailPlaceholder.Visibility = Visibility.Visible;
+        DetailContent.Visibility = Visibility.Collapsed;
+    }
+
+    private void ComponentsBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        ComponentsOverlay.Visibility = Visibility.Collapsed;
+        InventoryOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Imagen analizada";
+    }
+
+    private void ComponentsContinueButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Solo prepara la selección: el motor de eliminación no existe todavía
+        // y esta pantalla nunca toca el WIM.
+        var selected = _allComponentRows.Count(r => r.IsSelected);
+        _logger.Info($"Selección de componentes preparada ({selected} marcados). " +
+                     "El motor de eliminación aún no está disponible; no se modifica la imagen.");
+    }
+
+    private static string JoinNames(IEnumerable<ComponentDefinition>? components)
+    {
+        var names = components?.Select(c => c.DisplayName.Length > 0 ? c.DisplayName : c.Name).ToList();
+        return names is { Count: > 0 } ? string.Join(", ", names) : "--";
+    }
 
     // ---- Estado de la interfaz ------------------------------------------------
 
@@ -312,7 +457,10 @@ public partial class MainWindow : Window
     {
         _imageInfo = null;
         _inventory = null;
+        _catalog = null;
+        _allComponentRows = new List<ComponentRow>();
         InventoryOverlay.Visibility = Visibility.Collapsed;
+        ComponentsOverlay.Visibility = Visibility.Collapsed;
 
         InfoOs.Text = "--";
         InfoVersion.Text = "--";
@@ -352,3 +500,43 @@ public partial class MainWindow : Window
 
 /// <summary>Fila mostrada en la tabla de inventario (solo presentación).</summary>
 public sealed record InventoryRow(string Name, string State, string Details);
+
+/// <summary>Opción del ComboBox de filtro de la pantalla de componentes.</summary>
+public sealed record FilterOption(string Label, CatalogFilterKind Kind);
+
+/// <summary>
+/// Fila de la pantalla COMPONENTES: envuelve un <see cref="ComponentDefinition"/>
+/// con el estado de selección de la casilla. Puramente de presentación; el
+/// catálogo en sí no sabe nada de la UI.
+/// </summary>
+public sealed class ComponentRow
+{
+    public ComponentRow(ComponentDefinition component)
+    {
+        Component = component;
+        Editable = component.Protection != ComponentProtection.Protected;
+    }
+
+    public ComponentDefinition Component { get; }
+
+    public string DisplayName => Component.DisplayName.Length > 0 ? Component.DisplayName : Component.Name;
+
+    public string CategoryLabel => Component.Category.ToString();
+
+    /// <summary>Falso para componentes protegidos: la casilla queda bloqueada.</summary>
+    public bool Editable { get; }
+
+    public Visibility LockVisibility => Editable ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>Selección de preparación; no dispara ninguna modificación de la imagen.</summary>
+    public bool IsSelected { get; set; }
+
+    public string StatusLabel => Component.Protection switch
+    {
+        ComponentProtection.Protected => "🔒 Protegido",
+        ComponentProtection.Removable => "🟢 Removible",
+        ComponentProtection.Optional => "🟡 Opcional",
+        ComponentProtection.Recommended => "🔵 Recomendado",
+        _ => "⚪ Desconocido",
+    };
+}
