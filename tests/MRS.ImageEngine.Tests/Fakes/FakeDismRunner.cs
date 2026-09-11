@@ -66,6 +66,42 @@ internal sealed class FakeDismRunner : IDismRunner
         return Result("/Unmount-Wim /Discard", UnmountExitCode, string.Empty, false);
     }
 
+    public Task<ProcessRunResult> UnmountWimCommitAsync(string mountDir, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"commit:{mountDir}");
+        return Result("/Unmount-Wim /Commit", UnmountExitCode, string.Empty, false);
+    }
+
+    public Task<ProcessRunResult> ExportImageAsync(string sourceImageFile, int sourceIndex, string destinationImageFile, string? destinationName = null, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"export:{sourceIndex}");
+        return Result("/Export-Image", 0, string.Empty, false);
+    }
+
+    public Task<ProcessRunResult> RemoveProvisionedAppxPackageAsync(string mountDir, string packageName, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"remove-appx:{packageName}");
+        return Result("/Remove-ProvisionedAppxPackage", 0, string.Empty, false);
+    }
+
+    public Task<ProcessRunResult> DisableFeatureAsync(string mountDir, string featureName, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"disable-feature:{featureName}");
+        return Result("/Disable-Feature", 0, string.Empty, false);
+    }
+
+    public Task<ProcessRunResult> RemoveCapabilityAsync(string mountDir, string capabilityName, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"remove-capability:{capabilityName}");
+        return Result("/Remove-Capability", 0, string.Empty, false);
+    }
+
+    public Task<ProcessRunResult> RemovePackageAsync(string mountDir, string packageIdentity, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"remove-package:{packageIdentity}");
+        return Result("/Remove-Package", 0, string.Empty, false);
+    }
+
     public Task<ProcessRunResult> GetPackagesAsync(string mountDir, CancellationToken cancellationToken = default)
     {
         Calls.Add("packages");

@@ -882,5 +882,50 @@
                 </Grid>
             </Grid>
         </Grid>
+
+        <!-- ================= Pantalla de ejecución (fase 7) ================= -->
+        <Grid x:Name="ExecutionOverlay" Grid.Row="0" Grid.RowSpan="4"
+              Background="{StaticResource AppBackground}" Visibility="Collapsed" Panel.ZIndex="60">
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="APLICANDO CAMBIOS" Foreground="{StaticResource TextPrimary}"
+                           FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4"/>
+
+                <StackPanel Grid.Row="1" Margin="0,14,0,12">
+                    <TextBlock x:Name="ExecutionStatusText" Text="Preparando imagen..."
+                               Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ExecutionProgressText" Text="0 / 0" Margin="0,4,0,0"
+                               Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                </StackPanel>
+
+                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="ExecutionList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,10">
+                                        <TextBlock Text="{Binding Label}" FontSize="13" Foreground="{StaticResource TextPrimary}"/>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
+                <Grid Grid.Row="3" Margin="0,16,0,0">
+                    <Button x:Name="ExecutionCancelButton" Content="Cancelar" HorizontalAlignment="Left"
+                            Style="{StaticResource OutlineButton}" Padding="24,10" Click="ExecutionCancelButton_Click"/>
+                    <Button x:Name="ExecutionCloseButton" Content="Cerrar" HorizontalAlignment="Right"
+                            Style="{StaticResource AccentButton}" Padding="28,10" IsEnabled="False"
+                            Click="ExecutionCloseButton_Click"/>
+                </Grid>
+            </Grid>
+        </Grid>
     </Grid>
 </Window>

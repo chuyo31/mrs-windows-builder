@@ -17,8 +17,15 @@ using MRS.ImageEngine.Inventory;
 using MRS.ImageEngine.Iso;
 using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
+using MRS.RemovalEngine;
+using MRS.RemovalEngine.Models;
 using MRS.RemovalPlanning;
 using MRS.RemovalPlanning.Models;
+// "RemovalEngine" es a la vez el nombre de un namespace (MRS.RemovalEngine) y de
+// la clase que contiene; dentro del árbol de namespaces "MRS.*" el namespace
+// siempre gana en la búsqueda de nombres sin cualificar, así que se referencia
+// la clase con un alias explícito.
+using RemovalEngineClass = MRS.RemovalEngine.RemovalEngine;
 
 namespace MRS.WindowsBuilder;
 
@@ -54,6 +61,11 @@ public partial class MainWindow : Window
     private readonly ComponentCatalogService _catalogService = new();
     private readonly RemovalPlanBuilder _removalPlanBuilder = new();
 
+    private readonly IIsoMounter _isoMounter;
+    private readonly IWorkingImageFactory _workingImageFactory;
+    private readonly RemovalEngineClass _removalEngine;
+    private readonly RemovalVerifier _removalVerifier = new();
+
     private IsoInspectionResult? _iso;
     private ImageInfo? _imageInfo;
     private ImageInventory? _inventory;
@@ -61,6 +73,8 @@ public partial class MainWindow : Window
     private List<ComponentRow> _allComponentRows = new();
     private RemovalPlan? _pendingPlan;
     private RemovalPlan? _confirmedPlan;
+    private List<ExecutionRow> _executionRows = new();
+    private CancellationTokenSource? _executionCts;
     private string? _selectedProfile;
 
     public MainWindow()
@@ -71,10 +85,12 @@ public partial class MainWindow : Window
 
         var processRunner = new ProcessRunner();
         var dismRunner = new DismRunner(processRunner, _logger);
-        var isoMounter = new IsoMounter(processRunner, _logger);
+        _isoMounter = new IsoMounter(processRunner, _logger);
 
-        _imageService = new ImageService(dismRunner, isoMounter, new DismWimInfoParser(), _logger);
-        _inventoryService = new ImageInventoryService(dismRunner, isoMounter, _logger);
+        _imageService = new ImageService(dismRunner, _isoMounter, new DismWimInfoParser(), _logger);
+        _inventoryService = new ImageInventoryService(dismRunner, _isoMounter, _logger);
+        _workingImageFactory = new WorkingImageFactory(dismRunner, _logger);
+        _removalEngine = new RemovalEngineClass(dismRunner, _logger);
 
         _logger.Info("MRS Windows Builder iniciado");
         _logger.Info("Esperando seleccionar una ISO");
@@ -515,10 +531,8 @@ public partial class MainWindow : Window
         ComponentsOverlay.Visibility = Visibility.Visible;
     }
 
-    private void PlanConfirmButton_Click(object sender, RoutedEventArgs e)
+    private async void PlanConfirmButton_Click(object sender, RoutedEventArgs e)
     {
-        // "Confirmar plan" NO modifica el WIM: solo acepta el RemovalPlan en
-        // memoria para que la fase del RemovalEngine lo utilice más adelante.
         var plan = BuildPlanFromCurrentSelection();
         if (plan is null)
             return;
@@ -527,6 +541,221 @@ public partial class MainWindow : Window
         _logger.Info($"Plan de modificación confirmado y guardado en memoria: {plan.TotalAllowed} acción(es) " +
                      $"pendiente(s), {plan.TotalBlocked} bloqueada(s). No se ha modificado el WIM.");
         ShowPlan(plan);
+
+        if (plan.TotalAllowed == 0)
+        {
+            MessageBox.Show(this, "El plan no tiene ninguna acción permitida; no hay nada que aplicar.",
+                "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // Nunca se comienza sin confirmación explícita (Parte 25 del prompt).
+        var confirmation = MessageBox.Show(this,
+            "Se creará una copia de trabajo de la imagen original.\n" +
+            "El original no será modificado.\n" +
+            "Si una operación falla, los cambios se descartarán.",
+            "Aplicar cambios", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+
+        if (confirmation != MessageBoxResult.OK)
+            return;
+
+        var isoPath = IsoPathBox.Text;
+        var edition = EditionCombo.SelectedItem as ImageEdition;
+        if (string.IsNullOrWhiteSpace(isoPath) || edition is null)
+            return;
+
+        await RunExecutionAsync(isoPath, edition.Index, plan);
+    }
+
+    // ---- Pantalla de ejecución (RemovalEngine) -----------------------------
+
+    private async Task RunExecutionAsync(string isoPath, int index, RemovalPlan plan)
+    {
+        ShowExecutionScreen(plan);
+        _executionCts = new CancellationTokenSource();
+        _logger.Entry += OnExecutionLogEntry;
+
+        WorkingImage? workingImage = null;
+        RemovalExecutionResult? result = null;
+
+        try
+        {
+            ExecutionStatusText.Text = "Preparando imagen...";
+            _logger.Info("Preparando imagen...");
+
+            string wimPath;
+            await using (var isoMount = await _isoMounter.MountAsync(isoPath, _executionCts.Token))
+            {
+                wimPath = LocateInstallImage(isoMount.RootPath)
+                    ?? throw new FileNotFoundException(@"La ISO no contiene sources\install.wim ni sources\install.esd.");
+
+                ExecutionStatusText.Text = "Creando imagen de trabajo...";
+                workingImage = await _workingImageFactory.CreateAsync(wimPath, index, workspaceRoot: null, _executionCts.Token);
+            }
+
+            ExecutionStatusText.Text = "Montando imagen...";
+            result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token);
+
+            ReconcileExecutionRows(result);
+
+            if (result.Committed)
+            {
+                StatusText.Text = "Cambios aplicados";
+                MessageBox.Show(this, $"Cambios aplicados correctamente ({result.ActionsExecuted.Count} acción(es)).",
+                    "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+                await VerifyExecutionAsync(workingImage, result);
+            }
+            else if (result.Phase == RemovalExecutionPhase.Cancelled)
+            {
+                StatusText.Text = "Operación cancelada";
+                ExecutionStatusText.Text = "Operación cancelada. La imagen de trabajo no ha sido modificada.";
+            }
+            else
+            {
+                StatusText.Text = "Error al aplicar cambios";
+                ExecutionStatusText.Text = "No se pudieron aplicar los cambios. Revisa el registro.";
+                MessageBox.Show(this, "No se han podido aplicar los cambios. Los cambios se han descartado.",
+                    "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ExecutionStatusText.Text = "Operación cancelada. La imagen de trabajo no ha sido modificada.";
+            StatusText.Text = "Operación cancelada";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Error inesperado al aplicar cambios: {ex.Message}");
+            ExecutionStatusText.Text = "Error al preparar la imagen de trabajo.";
+            StatusText.Text = "Error";
+            MessageBox.Show(this, "No se han podido aplicar los cambios.",
+                "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _logger.Entry -= OnExecutionLogEntry;
+            ExecutionCancelButton.IsEnabled = false;
+            ExecutionCloseButton.IsEnabled = true;
+        }
+    }
+
+    private async Task VerifyExecutionAsync(WorkingImage workingImage, RemovalExecutionResult result)
+    {
+        try
+        {
+            ExecutionStatusText.Text = "Verificando cambios...";
+            var reinventory = await _inventoryService.BuildInventoryAsync(workingImage.WorkingWimPath, workingImage.Index);
+            var verification = _removalVerifier.Verify(result, _inventory ?? new ImageInventory(), reinventory.Inventory);
+
+            _logger.Info($"Reinventario: {verification.Removed.Count} confirmado(s) eliminado(s), " +
+                         $"{verification.StillPresent.Count} todavía presente(s), " +
+                         $"{verification.UnexpectedChanges.Count} cambio(s) inesperado(s).");
+
+            ExecutionStatusText.Text = $"Cambios aplicados y verificados: {verification.Removed.Count} confirmado(s).";
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"No se pudo verificar el resultado sobre la imagen de trabajo: {ex.Message}");
+        }
+    }
+
+    private void ShowExecutionScreen(RemovalPlan plan)
+    {
+        _executionRows = plan.Components
+            .Where(c => c.Allowed)
+            .Select(c => new ExecutionRow(c.ComponentId, c.DisplayName))
+            .ToList();
+
+        ExecutionStatusText.Text = "Preparando imagen...";
+        ExecutionProgressText.Text = $"0 / {_executionRows.Count}";
+        ExecutionCancelButton.IsEnabled = true;
+        ExecutionCloseButton.IsEnabled = false;
+        RefreshExecutionList();
+
+        PlanOverlay.Visibility = Visibility.Collapsed;
+        ExecutionOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Aplicando cambios...";
+    }
+
+    private void OnExecutionLogEntry(object? sender, LogEntry entry)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => OnExecutionLogEntry(sender, entry));
+            return;
+        }
+
+        const string startPrefix = "[REMOVAL] Inicio: ";
+        const string doneSuffix = " eliminado correctamente.";
+
+        if (entry.Message.StartsWith(startPrefix, StringComparison.Ordinal))
+        {
+            var name = entry.Message[startPrefix.Length..];
+            var row = _executionRows.FirstOrDefault(r => r.DisplayName == name);
+            if (row is not null) row.Status = ExecutionRowStatus.InProgress;
+            ExecutionStatusText.Text = "Aplicando cambios...";
+            RefreshExecutionList();
+        }
+        else if (entry.Message.EndsWith(doneSuffix, StringComparison.Ordinal))
+        {
+            var name = entry.Message[..^doneSuffix.Length];
+            var row = _executionRows.FirstOrDefault(r => r.DisplayName == name);
+            if (row is not null) row.Status = ExecutionRowStatus.Done;
+            UpdateExecutionProgress();
+            RefreshExecutionList();
+        }
+    }
+
+    private void ReconcileExecutionRows(RemovalExecutionResult result)
+    {
+        var executedIds = result.ActionsExecuted.Select(i => i.ComponentId).ToHashSet();
+        var failedIds = result.ActionsFailed.Select(i => i.ComponentId).ToHashSet();
+
+        foreach (var row in _executionRows)
+        {
+            row.Status = executedIds.Contains(row.ComponentId)
+                ? ExecutionRowStatus.Done
+                : failedIds.Contains(row.ComponentId)
+                    ? ExecutionRowStatus.Error
+                    : result.Phase == RemovalExecutionPhase.Cancelled
+                        ? ExecutionRowStatus.Cancelled
+                        : ExecutionRowStatus.Skipped;
+        }
+
+        UpdateExecutionProgress();
+        RefreshExecutionList();
+    }
+
+    private void UpdateExecutionProgress()
+        => ExecutionProgressText.Text = $"{_executionRows.Count(r => r.Status == ExecutionRowStatus.Done)} / {_executionRows.Count}";
+
+    private void RefreshExecutionList()
+        => ExecutionList.ItemsSource = _executionRows.ToList();
+
+    private void ExecutionCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        _executionCts?.Cancel();
+        ExecutionCancelButton.IsEnabled = false;
+        _logger.Info("Cancelación solicitada por el usuario.");
+    }
+
+    private void ExecutionCloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        ExecutionOverlay.Visibility = Visibility.Collapsed;
+        ComponentsOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Catálogo generado";
+    }
+
+    private static string? LocateInstallImage(string mountRoot)
+    {
+        foreach (var name in new[] { "install.wim", "install.esd" })
+        {
+            var candidate = Path.Combine(mountRoot, "sources", name);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
     }
 
     private static string JoinNames(IEnumerable<ComponentDefinition>? components)
@@ -553,9 +782,11 @@ public partial class MainWindow : Window
         _allComponentRows = new List<ComponentRow>();
         _pendingPlan = null;
         _confirmedPlan = null;
+        _executionRows = new List<ExecutionRow>();
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Collapsed;
         PlanOverlay.Visibility = Visibility.Collapsed;
+        ExecutionOverlay.Visibility = Visibility.Collapsed;
 
         InfoOs.Text = "--";
         InfoVersion.Text = "--";
@@ -681,4 +912,42 @@ public sealed class PlanItemRow
         brush.Freeze();
         return brush;
     }
+}
+
+/// <summary>Estado visual de una fila en la pantalla APLICANDO CAMBIOS.</summary>
+public enum ExecutionRowStatus
+{
+    Pending,
+    InProgress,
+    Done,
+    Error,
+    Skipped,
+    Cancelled,
+}
+
+/// <summary>Fila de la pantalla de ejecución: un componente permitido del plan y su progreso real.</summary>
+public sealed class ExecutionRow
+{
+    public ExecutionRow(string componentId, string displayName)
+    {
+        ComponentId = componentId;
+        DisplayName = displayName;
+    }
+
+    public string ComponentId { get; }
+    public string DisplayName { get; }
+    public ExecutionRowStatus Status { get; set; } = ExecutionRowStatus.Pending;
+
+    private string Icon => Status switch
+    {
+        ExecutionRowStatus.Pending => "○",
+        ExecutionRowStatus.InProgress => "⏳",
+        ExecutionRowStatus.Done => "✓",
+        ExecutionRowStatus.Error => "✗",
+        ExecutionRowStatus.Skipped => "⊘",
+        ExecutionRowStatus.Cancelled => "⊘",
+        _ => "○",
+    };
+
+    public string Label => $"{Icon} {DisplayName}";
 }

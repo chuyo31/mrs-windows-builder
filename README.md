@@ -40,56 +40,49 @@ varias bibliotecas de motor:
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
 | `MRS.RemovalPlanning` | `net8.0` | Motor de selección: RemovalPlan verificable, sin ejecutar nada. |
+| `MRS.RemovalEngine` | `net8.0` | Ejecuta el RemovalPlan sobre una copia de trabajo (Export/Mount/DISM/Commit-Discard). |
 | `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
-`MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog` y
-`MRS.RemovalPlanning` ya están implementados (análisis, inventario real,
-catálogo y plan de eliminación, todo sin modificar el WIM). El resto de
-bibliotecas siguen siendo **stubs** y se irán implementando en pasos
-posteriores.
+`MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog`,
+`MRS.RemovalPlanning` y `MRS.RemovalEngine` ya están implementados: análisis,
+inventario real, catálogo, plan de eliminación y ahora también su ejecución
+real sobre una copia de trabajo (la ISO original nunca se modifica). El resto
+de bibliotecas siguen siendo **stubs**.
 
 ---
 
-## Estado actual — P6
+## Estado actual — P7
 
-Motor de selección: transforma lo marcado en la pantalla COMPONENTES en un
-`RemovalPlan` verificable, sin tocar el WIM (ver
-[`prompts/06-resultado.md`](prompts/06-resultado.md)).
+Primer `RemovalEngine` real: aplica un `RemovalPlan` confirmado sobre una
+**copia de trabajo** de la imagen (la ISO original nunca se toca) (ver
+[`prompts/07-resultado.md`](prompts/07-resultado.md)).
 
 **Funciona:**
 
-- UI dark theme estilo Windows 11 con log `[INFO] [WARN] [ERROR] [DISM]`; `DataGrid`
-  y listas con tema oscuro completo (sin el chrome blanco por defecto de WPF).
-- **Seleccionar ISO → Analizar imagen → elegir edición → Continuar**: pantalla
-  de **INVENTARIO** real (monta con `/Mount-Wim /ReadOnly`, inventaría y
-  **desmonta siempre**, verificando con `/Get-MountedWimInfo`).
-- **Continuar** → pantalla **COMPONENTES**: clasificación + protección +
-  dependencias (fase 5), con buscador, filtros y casillas bloqueadas (🔒) en
-  los componentes protegidos.
-- Cada casilla recalcula en vivo un **RemovalPlan**
-  (`Selección → Catálogo → Protección → Dependencias → RemovalPlan`):
-  resumen "Seleccionados / Permitidos / Bloqueados / ⚠ Advertencias" y botón
-  **Ver plan** → pantalla **PLAN DE MODIFICACIÓN** (tarjetas ✓ ELIMINAR /
-  🔒 BLOQUEADO con motivo y riesgo). **Confirmar plan** solo lo guarda en
-  memoria; **nunca modifica el WIM**.
-- Protección absoluta (bloqueo + motivo), estados DISM
-  (Installed/Superseded/NotPresent/Unknown: solo Installed genera acción),
-  dependientes que impiden eliminar lo que otros componentes que se quedan
-  necesitan, y nunca eliminación en cascada silenciosa.
-- `RemovalPlanValidator` (segunda verificación independiente) y
-  `RemovalPlanSerializer` (JSON con versión de formato, listo para
-  `output/removal-plan.json`).
-- Garantía de compilación: `MRS.RemovalPlanning` no puede referenciar
-  `MRS.DismEngine` (ni transitivamente); no ejecuta DISM.
+- Todo lo de P1–P6 (análisis, inventario real, catálogo, `RemovalPlan`,
+  pantalla PLAN DE MODIFICACIÓN).
+- **Confirmar plan** → aviso obligatorio ("se creará una copia de trabajo...
+  el original no será modificado... si falla se descarta") con
+  Cancelar/Aplicar cambios; solo tras aceptar se ejecuta algo.
+- `WorkingImageFactory`: `DISM /Export-Image` de la edición elegida a un WIM
+  de trabajo independiente (el origen solo se lee).
+- `RemovalEngine`: monta la copia en **lectura/escritura**, ejecuta las
+  acciones del plan en orden fijo (AppX → Features → Capabilities →
+  Packages) volviendo a comprobar protección/permiso/compatibilidad antes de
+  cada una, y decide con el `ExitCode` de DISM. Primer error → aborta y
+  `/Unmount-Wim /Discard`; todo correcto → `/Unmount-Wim /Commit`. Nunca
+  `/ResetBase`, `/StartComponentCleanup` ni `/Cleanup-Image`.
+- Pantalla **APLICANDO CAMBIOS**: estado, progreso "X / Y", lista con
+  ○/⏳/✓/✗/⊘ por componente, cancelación cooperativa.
+- Tras un commit, reinventaría la copia de trabajo y compara con
+  `RemovalVerifier` (eliminado/todavía presente/cambios inesperados).
 
 **Todavía NO hace:**
 
-- `RemovalEngine` real ni ninguna eliminación/deshabilitación real
-  (Remove-Package, Remove-ProvisionedAppxPackage, Disable-Feature,
-  Remove-Capability, archivos, registro, servicios, tareas).
-- Perfiles Normal/Light/Medium/Ultra/Custom automáticos, limpieza, compresión,
-  creación de ISO, PCPI ni App Packs.
+- Perfiles Normal/Light/Medium/Ultra/Custom automáticos, `/Remove` de
+  features, limpieza de checkpoints/ResetBase, compresión, creación de la
+  ISO final, PCPI ni App Packs.
 
 ---
 
@@ -120,6 +113,7 @@ src/
   MRS.ImageEngine/        Modelos, parsers de DISM, montaje de ISO, ImageService, ImageInventoryService
   MRS.ComponentCatalog/   Clasificación, protección, dependencias, búsqueda/filtros del catálogo
   MRS.RemovalPlanning/    RemovalPlanBuilder/Validator/Serializer (sin referenciar MRS.DismEngine)
+  MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard)
   MRS.ISOEngine/          (stub)
   MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
@@ -142,5 +136,6 @@ app-packs/  docs/  profiles/   (reservados, vacíos)
 - [x] **P4** – Inventario **real** del WIM: `/Mount-Wim` del índice elegido, las 5 categorías vía DISM, `/Unmount-Wim /Discard` garantizado y verificación de que no quedan montajes.
 - [x] **P5** – `MRS.ComponentCatalog`: clasificación por categorías, protección de componentes críticos con motivo, dependencias, búsqueda/filtros y pantalla COMPONENTES. Sin eliminar nada todavía.
 - [x] **P6** – `MRS.RemovalPlanning`: RemovalPlan verificable (protección, estados, dependencias/dependientes, validador, serialización JSON) y pantalla PLAN DE MODIFICACIÓN. Sigue sin modificar el WIM.
-- [ ] **P7** – `RemovalEngine` real + `MRS.ProfileEngine`: ejecución de las acciones del plan y perfiles Normal/Light/Medium/Ultra/Custom.
-- [ ] **P8** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.
+- [x] **P7** – `MRS.RemovalEngine`: copia de trabajo (Export-Image), montaje ReadWrite, ejecución ordenada con abort/discard transaccional, commit y verificación por reinventario. La ISO original nunca se modifica.
+- [ ] **P8** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom (selección automática sobre el catálogo).
+- [ ] **P9** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.

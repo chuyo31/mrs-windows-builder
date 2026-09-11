@@ -18,6 +18,8 @@ public sealed class DismRunner : IDismRunner
     private static readonly TimeSpan QueryTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MountTimeout = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan UnmountTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan ExportTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan ModifyTimeout = TimeSpan.FromMinutes(15);
 
     private readonly IProcessRunner _processRunner;
     private readonly IAppLogger _logger;
@@ -50,6 +52,18 @@ public sealed class DismRunner : IDismRunner
     public Task<ProcessRunResult> UnmountWimDiscardAsync(string mountDir, CancellationToken cancellationToken = default)
         => ExecuteAsync($"/English /Unmount-Wim /MountDir:\"{mountDir}\" /Discard", UnmountTimeout, cancellationToken);
 
+    public Task<ProcessRunResult> UnmountWimCommitAsync(string mountDir, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Unmount-Wim /MountDir:\"{mountDir}\" /Commit", UnmountTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> ExportImageAsync(
+        string sourceImageFile, int sourceIndex, string destinationImageFile, string? destinationName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync(
+            $"/English /Export-Image /SourceImageFile:\"{sourceImageFile}\" /SourceIndex:{sourceIndex} " +
+            $"/DestinationImageFile:\"{destinationImageFile}\"" +
+            (string.IsNullOrWhiteSpace(destinationName) ? string.Empty : $" /DestinationName:\"{destinationName}\""),
+            ExportTimeout, cancellationToken);
+
     public Task<ProcessRunResult> GetPackagesAsync(string mountDir, CancellationToken cancellationToken = default)
         => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Packages", QueryTimeout, cancellationToken);
 
@@ -64,6 +78,20 @@ public sealed class DismRunner : IDismRunner
 
     public Task<ProcessRunResult> GetDriversAsync(string mountDir, CancellationToken cancellationToken = default)
         => ExecuteAsync($"/English /Image:\"{mountDir}\" /Get-Drivers", QueryTimeout, cancellationToken);
+
+    // --- Modificación de una imagen de trabajo montada en escritura (fase 7) ---
+
+    public Task<ProcessRunResult> RemoveProvisionedAppxPackageAsync(string mountDir, string packageName, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Remove-ProvisionedAppxPackage /PackageName:\"{packageName}\"", ModifyTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> DisableFeatureAsync(string mountDir, string featureName, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Disable-Feature /FeatureName:\"{featureName}\"", ModifyTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> RemoveCapabilityAsync(string mountDir, string capabilityName, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Remove-Capability /CapabilityName:\"{capabilityName}\"", ModifyTimeout, cancellationToken);
+
+    public Task<ProcessRunResult> RemovePackageAsync(string mountDir, string packageIdentity, CancellationToken cancellationToken = default)
+        => ExecuteAsync($"/English /Image:\"{mountDir}\" /Remove-Package /PackageName:\"{packageIdentity}\"", ModifyTimeout, cancellationToken);
 
     private async Task<ProcessRunResult> ExecuteAsync(string arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
