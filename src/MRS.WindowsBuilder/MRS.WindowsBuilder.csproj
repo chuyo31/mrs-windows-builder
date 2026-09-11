@@ -14,6 +14,7 @@
     <ProjectReference Include="..\MRS.ImageEngine\MRS.ImageEngine.csproj" />
     <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" />
     <ProjectReference Include="..\MRS.ComponentCatalog\MRS.ComponentCatalog.csproj" />
+    <ProjectReference Include="..\MRS.RemovalPlanning\MRS.RemovalPlanning.csproj" />
   </ItemGroup>
 
 </Project>

@@ -7,7 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" />
+    <!-- PrivateAssets="all": no fluye de forma transitiva a quien referencie
+         MRS.ImageEngine (p. ej. MRS.RemovalPlanning), para que la garantía de
+         "RemovalPlanBuilder no puede referenciar DismRunner" sea real y no
+         solo un comentario. Quien de verdad necesite DismEngine (la app,
+         los tests de ImageEngine) lo referencia explícitamente. -->
+    <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 using MRS.ComponentCatalog;
 using MRS.ComponentCatalog.Models;
@@ -16,15 +17,17 @@ using MRS.ImageEngine.Inventory;
 using MRS.ImageEngine.Iso;
 using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
+using MRS.RemovalPlanning;
+using MRS.RemovalPlanning.Models;
 
 namespace MRS.WindowsBuilder;
 
 /// <summary>
 /// Interaction logic for MainWindow.xaml
 ///
-/// La ventana no contiene lógica DISM ni de catalogación: delega en
-/// <see cref="ImageService"/>, <see cref="ImageInventoryService"/> y
-/// <see cref="ComponentCatalogService"/>.
+/// La ventana no contiene lógica DISM, de catalogación ni de planificación:
+/// delega en <see cref="ImageService"/>, <see cref="ImageInventoryService"/>,
+/// <see cref="ComponentCatalogService"/> y <see cref="RemovalPlanBuilder"/>.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -49,12 +52,15 @@ public partial class MainWindow : Window
     private readonly ImageService _imageService;
     private readonly ImageInventoryService _inventoryService;
     private readonly ComponentCatalogService _catalogService = new();
+    private readonly RemovalPlanBuilder _removalPlanBuilder = new();
 
     private IsoInspectionResult? _iso;
     private ImageInfo? _imageInfo;
     private ImageInventory? _inventory;
     private ComponentCatalogResult? _catalog;
     private List<ComponentRow> _allComponentRows = new();
+    private RemovalPlan? _pendingPlan;
+    private RemovalPlan? _confirmedPlan;
     private string? _selectedProfile;
 
     public MainWindow()
@@ -362,6 +368,7 @@ public partial class MainWindow : Window
 
         RenderComponents();
         ClearComponentDetail();
+        UpdateSelectionSummary();
 
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Visible;
@@ -428,13 +435,98 @@ public partial class MainWindow : Window
         StatusText.Text = "Imagen analizada";
     }
 
-    private void ComponentsContinueButton_Click(object sender, RoutedEventArgs e)
+    private void ComponentSelectionCheckBox_Changed(object sender, RoutedEventArgs e)
+        => UpdateSelectionSummary();
+
+    /// <summary>
+    /// Selección -&gt; Catálogo -&gt; Protección -&gt; Dependencias -&gt; RemovalPlan, recalculado en
+    /// vivo con cada checkbox. Nunca ejecuta DISM ni toca el WIM.
+    /// </summary>
+    private RemovalPlan? BuildPlanFromCurrentSelection()
     {
-        // Solo prepara la selección: el motor de eliminación no existe todavía
-        // y esta pantalla nunca toca el WIM.
-        var selected = _allComponentRows.Count(r => r.IsSelected);
-        _logger.Info($"Selección de componentes preparada ({selected} marcados). " +
-                     "El motor de eliminación aún no está disponible; no se modifica la imagen.");
+        if (_catalog is null)
+            return null;
+
+        var selections = _allComponentRows
+            .Select(row => new ComponentSelection(row.Component.Id, row.IsSelected))
+            .ToList();
+
+        var imageId = _imageInfo is null
+            ? "Imagen sin identificar"
+            : $"{_imageInfo.OperatingSystem} {_imageInfo.DisplayVersion} ({(EditionCombo.SelectedItem as ImageEdition)?.Name})";
+
+        return _removalPlanBuilder.Build(_inventory ?? new ImageInventory(), _catalog, selections, imageId);
+    }
+
+    private void UpdateSelectionSummary()
+    {
+        var plan = BuildPlanFromCurrentSelection();
+        _pendingPlan = plan;
+
+        SelectionSummaryText.Text = plan is null
+            ? "Seleccionados: 0    Permitidos: 0    Bloqueados: 0    ⚠ Advertencias: 0"
+            : $"Seleccionados: {plan.TotalSelected}    Permitidos: {plan.TotalAllowed}    " +
+              $"Bloqueados: {plan.TotalBlocked}    ⚠ Advertencias: {plan.Warnings.Count}";
+
+        ViewPlanButton.IsEnabled = (plan?.TotalSelected ?? 0) > 0;
+    }
+
+    private void ViewPlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        var plan = BuildPlanFromCurrentSelection();
+        if (plan is null)
+            return;
+
+        _pendingPlan = plan;
+        ShowPlan(plan);
+    }
+
+    // ---- Pantalla de plan de modificación ----------------------------------
+
+    private void ShowPlan(RemovalPlan plan)
+    {
+        PlanItemsList.ItemsSource = plan.Components.Select(item => new PlanItemRow(item)).ToList();
+        PlanSummaryText.Text =
+            $"{plan.TotalSelected} seleccionados    {plan.TotalAllowed} acciones permitidas    " +
+            $"{plan.TotalBlocked} bloqueados    {plan.Warnings.Count} advertencias";
+
+        ComponentsOverlay.Visibility = Visibility.Collapsed;
+        PlanOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Plan de modificación generado";
+    }
+
+    private void PlanBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        PlanOverlay.Visibility = Visibility.Collapsed;
+        ComponentsOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = "Catálogo generado";
+    }
+
+    private void PlanCancelSelectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var row in _allComponentRows)
+            row.IsSelected = false;
+
+        RenderComponents(); // refresca los checkboxes visibles
+        UpdateSelectionSummary();
+        _logger.Info("Selección de componentes cancelada.");
+
+        PlanOverlay.Visibility = Visibility.Collapsed;
+        ComponentsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void PlanConfirmButton_Click(object sender, RoutedEventArgs e)
+    {
+        // "Confirmar plan" NO modifica el WIM: solo acepta el RemovalPlan en
+        // memoria para que la fase del RemovalEngine lo utilice más adelante.
+        var plan = BuildPlanFromCurrentSelection();
+        if (plan is null)
+            return;
+
+        _confirmedPlan = plan;
+        _logger.Info($"Plan de modificación confirmado y guardado en memoria: {plan.TotalAllowed} acción(es) " +
+                     $"pendiente(s), {plan.TotalBlocked} bloqueada(s). No se ha modificado el WIM.");
+        ShowPlan(plan);
     }
 
     private static string JoinNames(IEnumerable<ComponentDefinition>? components)
@@ -459,8 +551,11 @@ public partial class MainWindow : Window
         _inventory = null;
         _catalog = null;
         _allComponentRows = new List<ComponentRow>();
+        _pendingPlan = null;
+        _confirmedPlan = null;
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Collapsed;
+        PlanOverlay.Visibility = Visibility.Collapsed;
 
         InfoOs.Text = "--";
         InfoVersion.Text = "--";
@@ -539,4 +634,51 @@ public sealed class ComponentRow
         ComponentProtection.Recommended => "🔵 Recomendado",
         _ => "⚪ Desconocido",
     };
+}
+
+/// <summary>
+/// Fila de la pantalla PLAN DE MODIFICACIÓN: presenta un
+/// <see cref="RemovalPlanItem"/> con el estilo "✓ ELIMINAR" / "🔒 BLOQUEADO"
+/// del mockup. Puramente de presentación.
+/// </summary>
+public sealed class PlanItemRow
+{
+    private static readonly Brush AllowedBrush = FrozenBrush(0x3F, 0xD0, 0x7A);
+    private static readonly Brush BlockedBrush = FrozenBrush(0xE5, 0x48, 0x4D);
+
+    public PlanItemRow(RemovalPlanItem item) => Item = item;
+
+    public RemovalPlanItem Item { get; }
+
+    private bool Blocked => !Item.Allowed;
+
+    public string StatusText => Blocked ? "🔒 BLOQUEADO" : "✓ ELIMINAR";
+
+    public Brush StatusBrush => Blocked ? BlockedBrush : AllowedBrush;
+
+    public string Name => Item.DisplayName;
+
+    public string Subtitle => Blocked
+        ? Item.Category.ToString()
+        : $"{Item.Category} · {Item.Action}";
+
+    public string? Detail => Blocked ? Item.BlockReason : $"Riesgo: {RiskLabel(Item.Risk)}";
+
+    public Visibility DetailVisibility => string.IsNullOrWhiteSpace(Detail) ? Visibility.Collapsed : Visibility.Visible;
+
+    private static string RiskLabel(ComponentRisk risk) => risk switch
+    {
+        ComponentRisk.Critical => "Crítico",
+        ComponentRisk.High => "Alto",
+        ComponentRisk.Medium => "Medio",
+        ComponentRisk.Low => "Bajo",
+        _ => "Desconocido",
+    };
+
+    private static Brush FrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 }

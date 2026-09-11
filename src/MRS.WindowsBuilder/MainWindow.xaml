@@ -746,6 +746,8 @@
                                             <Grid>
                                                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                           IsEnabled="{Binding Editable}"
+                                                          Checked="ComponentSelectionCheckBox_Changed"
+                                                          Unchecked="ComponentSelectionCheckBox_Changed"
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 <TextBlock Text="🔒" FontSize="11" HorizontalAlignment="Center"
                                                            VerticalAlignment="Center"
@@ -809,12 +811,74 @@
                     </Border>
                 </Grid>
 
-                <!-- Acciones -->
+                <!-- Resumen de selección + acciones -->
+                <StackPanel Grid.Row="3" Margin="0,16,0,0">
+                    <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10">
+                        <TextBlock x:Name="SelectionSummaryText" FontSize="12" Foreground="{StaticResource TextPrimary}"
+                                   Text="Seleccionados: 0    Permitidos: 0    Bloqueados: 0    ⚠ Advertencias: 0"/>
+                    </Border>
+                    <Grid>
+                        <Button x:Name="ComponentsBackButton" Content="Volver" HorizontalAlignment="Left"
+                                Style="{StaticResource OutlineButton}" Padding="24,10" Click="ComponentsBackButton_Click"/>
+                        <Button x:Name="ViewPlanButton" Content="Ver plan" HorizontalAlignment="Right"
+                                Style="{StaticResource AccentButton}" Padding="28,10" IsEnabled="False"
+                                Click="ViewPlanButton_Click"/>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- ================= Pantalla de plan de modificación (fase 6) ================= -->
+        <Grid x:Name="PlanOverlay" Grid.Row="0" Grid.RowSpan="4"
+              Background="{StaticResource AppBackground}" Visibility="Collapsed" Panel.ZIndex="50">
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="PLAN DE MODIFICACIÓN" Foreground="{StaticResource TextPrimary}"
+                           FontSize="18" FontWeight="SemiBold" Margin="0,0,0,14"/>
+
+                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="PlanItemsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,12">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12"
+                                                       Foreground="{Binding StatusBrush}"/>
+                                            <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" Margin="0,4,0,2"/>
+                                            <TextBlock Text="{Binding Subtitle}" FontSize="12"
+                                                       Foreground="{StaticResource TextSecondary}"/>
+                                            <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource TextSecondary}" Margin="0,4,0,0"
+                                                       Visibility="{Binding DetailVisibility}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
+                <TextBlock Grid.Row="2" x:Name="PlanSummaryText" Margin="0,12,0,0"
+                           Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+
                 <Grid Grid.Row="3" Margin="0,16,0,0">
-                    <Button x:Name="ComponentsBackButton" Content="Volver" HorizontalAlignment="Left"
-                            Style="{StaticResource OutlineButton}" Padding="24,10" Click="ComponentsBackButton_Click"/>
-                    <Button x:Name="ComponentsContinueButton" Content="Continuar" HorizontalAlignment="Right"
-                            Style="{StaticResource AccentButton}" Padding="28,10" Click="ComponentsContinueButton_Click"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                        <Button x:Name="PlanBackButton" Content="Volver" Style="{StaticResource OutlineButton}"
+                                Padding="24,10" Click="PlanBackButton_Click"/>
+                        <Button x:Name="PlanCancelSelectionButton" Content="Cancelar selección"
+                                Style="{StaticResource OutlineButton}" Padding="24,10" Margin="10,0,0,0"
+                                Click="PlanCancelSelectionButton_Click"/>
+                    </StackPanel>
+                    <Button x:Name="PlanConfirmButton" Content="Confirmar plan" HorizontalAlignment="Right"
+                            Style="{StaticResource AccentButton}" Padding="28,10" Click="PlanConfirmButton_Click"/>
                 </Grid>
             </Grid>
         </Grid>

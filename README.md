@@ -39,50 +39,57 @@ varias bibliotecas de motor:
 | `MRS.ImageEngine` | `net8.0` | Lectura de metadatos de la imagen (WIM/ESD), ediciones. |
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
+| `MRS.RemovalPlanning` | `net8.0` | Motor de selección: RemovalPlan verificable, sin ejecutar nada. |
 | `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
-`MRS.DismEngine`, `MRS.ImageEngine` y `MRS.ComponentCatalog` ya están
-implementados (análisis, inventario real y catálogo, todo de solo lectura).
-El resto de bibliotecas siguen siendo **stubs** y se irán implementando en
-pasos posteriores.
+`MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog` y
+`MRS.RemovalPlanning` ya están implementados (análisis, inventario real,
+catálogo y plan de eliminación, todo sin modificar el WIM). El resto de
+bibliotecas siguen siendo **stubs** y se irán implementando en pasos
+posteriores.
 
 ---
 
-## Estado actual — P5
+## Estado actual — P6
 
-Catálogo inteligente de componentes, clasificado y protegido, a partir del
-inventario real (ver [`prompts/05-resultado.md`](prompts/05-resultado.md)).
+Motor de selección: transforma lo marcado en la pantalla COMPONENTES en un
+`RemovalPlan` verificable, sin tocar el WIM (ver
+[`prompts/06-resultado.md`](prompts/06-resultado.md)).
 
 **Funciona:**
 
 - UI dark theme estilo Windows 11 con log `[INFO] [WARN] [ERROR] [DISM]`; `DataGrid`
   y listas con tema oscuro completo (sin el chrome blanco por defecto de WPF).
 - **Seleccionar ISO → Analizar imagen → elegir edición → Continuar**: pantalla
-  de **INVENTARIO** real (`ImageInventoryService`: monta el índice elegido con
-  `/Mount-Wim /ReadOnly`, inventaría paquetes/features/capabilities/apps/drivers
-  y **desmonta siempre**, verificando con `/Get-MountedWimInfo`).
-- **Continuar** desde el inventario → pantalla **COMPONENTES**:
-  `ImageInventory → CatalogClassifier → ProtectionEngine → DependencyResolver`.
-  - Clasifica cada paquete/AppX/feature/capability/driver detectado en una
-    categoría (Gaming, Application, AI, Communication, Store, Framework,
-    Security, WindowsUpdate, Networking, Printing, Media, Language...).
-  - Protege con reglas específicas y revisables (Servicing Stack, CBS, SSU,
-    LCU, Windows Update, Defender, Microsoft Store, Windows Installer, WinRE,
-    Wi-Fi/Ethernet/Bluetooth, USB, audio, impresión, VCLibs, UI.Xaml, .NET,
-    paquete base del sistema, idioma, OOBE), cada una con motivo explicado.
-  - Primera estructura de dependencias (p. ej. apps AppX → frameworks
-    compartidos como VCLibs/UI.Xaml).
-  - UI: buscador, filtro por categoría/protección/riesgo, casillas de
-    selección (bloqueadas y con 🔒 para los componentes protegidos) y panel de
-    detalle. **No modifica el WIM** ni ejecuta DISM: solo clasifica.
-  - Reglas externalizadas en `catalog/win11/*.json` (Part 10), con un conjunto
-    embebido equivalente usado por defecto.
+  de **INVENTARIO** real (monta con `/Mount-Wim /ReadOnly`, inventaría y
+  **desmonta siempre**, verificando con `/Get-MountedWimInfo`).
+- **Continuar** → pantalla **COMPONENTES**: clasificación + protección +
+  dependencias (fase 5), con buscador, filtros y casillas bloqueadas (🔒) en
+  los componentes protegidos.
+- Cada casilla recalcula en vivo un **RemovalPlan**
+  (`Selección → Catálogo → Protección → Dependencias → RemovalPlan`):
+  resumen "Seleccionados / Permitidos / Bloqueados / ⚠ Advertencias" y botón
+  **Ver plan** → pantalla **PLAN DE MODIFICACIÓN** (tarjetas ✓ ELIMINAR /
+  🔒 BLOQUEADO con motivo y riesgo). **Confirmar plan** solo lo guarda en
+  memoria; **nunca modifica el WIM**.
+- Protección absoluta (bloqueo + motivo), estados DISM
+  (Installed/Superseded/NotPresent/Unknown: solo Installed genera acción),
+  dependientes que impiden eliminar lo que otros componentes que se quedan
+  necesitan, y nunca eliminación en cascada silenciosa.
+- `RemovalPlanValidator` (segunda verificación independiente) y
+  `RemovalPlanSerializer` (JSON con versión de formato, listo para
+  `output/removal-plan.json`).
+- Garantía de compilación: `MRS.RemovalPlanning` no puede referenciar
+  `MRS.DismEngine` (ni transitivamente); no ejecuta DISM.
 
 **Todavía NO hace:**
 
-- Eliminación de componentes, perfiles Normal/Light/Medium/Ultra/Custom, registro offline.
-- Limpieza de componentes, compresión, creación de ISO, PCPI ni App Packs.
+- `RemovalEngine` real ni ninguna eliminación/deshabilitación real
+  (Remove-Package, Remove-ProvisionedAppxPackage, Disable-Feature,
+  Remove-Capability, archivos, registro, servicios, tareas).
+- Perfiles Normal/Light/Medium/Ultra/Custom automáticos, limpieza, compresión,
+  creación de ISO, PCPI ni App Packs.
 
 ---
 
@@ -112,12 +119,14 @@ src/
   MRS.DismEngine/         Procesos externos, logging e invocación de DISM
   MRS.ImageEngine/        Modelos, parsers de DISM, montaje de ISO, ImageService, ImageInventoryService
   MRS.ComponentCatalog/   Clasificación, protección, dependencias, búsqueda/filtros del catálogo
+  MRS.RemovalPlanning/    RemovalPlanBuilder/Validator/Serializer (sin referenciar MRS.DismEngine)
   MRS.ISOEngine/          (stub)
   MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
 tests/
-  MRS.ImageEngine.Tests/      Tests xUnit (parsers, análisis, inventario, workspace)
-  MRS.ComponentCatalog.Tests/ Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
+  MRS.ImageEngine.Tests/       Tests xUnit (parsers, análisis, inventario, workspace)
+  MRS.ComponentCatalog.Tests/  Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
+  MRS.RemovalPlanning.Tests/   Tests xUnit (selección, protección, dependencias, plan, validación, JSON)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
 app-packs/  docs/  profiles/   (reservados, vacíos)
@@ -132,5 +141,6 @@ app-packs/  docs/  profiles/   (reservados, vacíos)
 - [x] **P3** – Inventario de SOLO LECTURA (montar → inspeccionar → desmontar): paquetes, features, capabilities, apps provisionadas y drivers.
 - [x] **P4** – Inventario **real** del WIM: `/Mount-Wim` del índice elegido, las 5 categorías vía DISM, `/Unmount-Wim /Discard` garantizado y verificación de que no quedan montajes.
 - [x] **P5** – `MRS.ComponentCatalog`: clasificación por categorías, protección de componentes críticos con motivo, dependencias, búsqueda/filtros y pantalla COMPONENTES. Sin eliminar nada todavía.
-- [ ] **P6** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom y motor de eliminación.
-- [ ] **P7** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.
+- [x] **P6** – `MRS.RemovalPlanning`: RemovalPlan verificable (protección, estados, dependencias/dependientes, validador, serialización JSON) y pantalla PLAN DE MODIFICACIÓN. Sigue sin modificar el WIM.
+- [ ] **P7** – `RemovalEngine` real + `MRS.ProfileEngine`: ejecución de las acciones del plan y perfiles Normal/Light/Medium/Ultra/Custom.
+- [ ] **P8** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO.
