@@ -50,6 +50,20 @@ public sealed class RemovalEngine : IRemovalEngine
 
         // ---- 1) PRE-FLIGHT ------------------------------------------------
 
+        LogContext("preflight-inicio", image);
+
+        if (!image.HasConsistentWorkspace())
+        {
+            // MountPath o WorkingWimPath pertenecen a un workspace distinto de
+            // WorkspacePath: exactamente el problema que investigó P09. Se aborta
+            // antes de montar nada en vez de arriesgarse a mezclar contextos.
+            errors.Add(
+                $"La imagen de trabajo mezcla rutas de workspaces distintos " +
+                $"(WorkspaceId esperado: {image.WorkspaceId}; MountPath: {image.MountPath}; WorkingWimPath: {image.WorkingWimPath}).");
+            _logger.Error($"[WORKSPACE] Contexto inconsistente detectado. {DescribeContext(image)}");
+            return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
+        }
+
         if (!plan.IsValid)
         {
             errors.Add("El RemovalPlan no es válido (contiene errores de construcción).");
@@ -93,6 +107,7 @@ public sealed class RemovalEngine : IRemovalEngine
             return BuildResult(RemovalExecutionPhase.Mounting, false, image, executed, failed, warnings, errors, false, false);
         }
         image.IsMounted = true;
+        LogContext("montada", image);
 
         // ---- 3) EJECUCIÓN (AppX -> Features -> Capabilities -> Packages) -
 
@@ -129,6 +144,7 @@ public sealed class RemovalEngine : IRemovalEngine
             var displayName = itemsById.TryGetValue(action.ComponentId, out var planItem) ? planItem.DisplayName : action.ComponentId;
             _logger.Info($"[REMOVAL] Inicio: {displayName}");
             _logger.Info($"[REMOVAL] Action: {action.ActionType}");
+            LogContext($"ejecutando:{action.ComponentId}", image);
 
             var startedAt = DateTimeOffset.UtcNow;
             ProcessRunResult result;
@@ -188,6 +204,7 @@ public sealed class RemovalEngine : IRemovalEngine
         }
 
         _logger.Info("Confirmando cambios (commit)...");
+        LogContext("commit-inicio", image);
         var commit = await _dism.UnmountWimCommitAsync(image.MountPath, cancellationToken).ConfigureAwait(false);
         image.IsMounted = false;
 
@@ -212,11 +229,26 @@ public sealed class RemovalEngine : IRemovalEngine
         }
 
         image.IsCommitted = true;
+        LogContext("commit-confirmado", image);
         await VerifyNoMountsRemainAsync(image.MountPath).ConfigureAwait(false);
         _logger.Info("[REMOVAL] Cambios aplicados y confirmados correctamente.");
 
         return BuildResult(RemovalExecutionPhase.Completed, true, image, executed, failed, warnings, errors, true, false);
     }
+
+    /// <summary>
+    /// Log estructurado (OperationId/WorkspaceId/SourceWimPath/WorkingWimPath/MountDir)
+    /// de una única operación de <see cref="RemovalEngine"/>. El OperationId es el
+    /// WorkspaceId de la imagen de trabajo: toda la operación usa siempre ese
+    /// mismo workspace de principio a fin, nunca uno distinto a mitad de camino.
+    /// </summary>
+    private void LogContext(string phase, WorkingImage image)
+        => _logger.Info($"[WORKSPACE] {DescribeContext(image, phase)}");
+
+    private static string DescribeContext(WorkingImage image, string? phase = null)
+        => $"{(phase is null ? string.Empty : $"Phase={phase} ")}OperationId={image.WorkspaceId} " +
+           $"WorkspaceId={image.WorkspaceId} SourceWimPath={image.SourcePath} " +
+           $"WorkingWimPath={image.WorkingWimPath} MountDir={image.MountPath}";
 
     // ---- Helpers -------------------------------------------------------------
 
@@ -286,6 +318,7 @@ public sealed class RemovalEngine : IRemovalEngine
 
     private async Task DiscardAsync(WorkingImage image)
     {
+        LogContext("discard-inicio", image);
         try
         {
             // Idempotente: si ya no está montada (p. ej. un finally repetido, o un

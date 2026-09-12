@@ -52,14 +52,15 @@ de bibliotecas siguen siendo **stubs**.
 
 ---
 
-## Estado actual — P7 (+ corrección P08)
+## Estado actual — P7 (+ correcciones P08/P09)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
 `RemovalPlan` confirmado sobre una **copia de trabajo** de la imagen (la ISO
-original nunca se toca) (ver
-[`prompts/07-resultado.md`](prompts/07-resultado.md) y la corrección de
-finalización de UI en [`prompts/08-resultado.md`](prompts/08-resultado.md)).
+original nunca se toca) (ver [`prompts/07-resultado.md`](prompts/07-resultado.md),
+la corrección de finalización de UI en [`prompts/08-resultado.md`](prompts/08-resultado.md)
+y la auditoría del ciclo de vida workspace/mount en
+[`prompts/09-resultado.md`](prompts/09-resultado.md)).
 
 **Funciona:**
 
@@ -91,6 +92,19 @@ porque el desbloqueo de la UI esperaba a un reinventario adicional (fuera de
 la operación transaccional del motor). Solucionado: la UI se desbloquea en
 cuanto el `RemovalEngine` termina (Commit + Unmount + su verificación
 interna incluidos), antes del aviso y del reinventario.
+
+**Corrección P09** — `Get-MountedWimInfo` seguía mostrando, tras una
+eliminación exitosa, una entrada `Status: Invalid` que combinaba el
+`Mount Dir` del workspace de la verificación posterior con el `Image File`
+del workspace del `RemovalEngine`. Causa: el reinventario de verificación
+crea su propio workspace de solo lectura y lo borraba del disco sin
+confirmar primero (vía `Get-MountedWimInfo`) que DISM ya no lo consideraba
+montado. Solucionado: el workspace de un inventario solo se borra cuando el
+desmontaje queda confirmado explícitamente; si no, se conserva para
+diagnóstico. Se añadió además logging estructurado
+(OperationId/WorkspaceId/SourceWimPath/WorkingWimPath/MountDir) y una guarda
+en `RemovalEngine` que aborta si una imagen de trabajo mezclara rutas de dos
+workspaces distintos.
 
 **Todavía NO hace:**
 

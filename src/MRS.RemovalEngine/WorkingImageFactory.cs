@@ -37,10 +37,14 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
 
         _logger.Info("Creando workspace...");
         var workspace = InventoryWorkspace.CreateNew(workspaceRoot);
+        var destination = Path.Combine(workspace.SourcePath, "install.wim");
+
+        _logger.Info(
+            $"[WORKSPACE] Phase=workspace-creado OperationId={workspace.WorkspaceId} " +
+            $"WorkspaceId={workspace.WorkspaceId} SourceWimPath={sourceWimPath} " +
+            $"WorkingWimPath={destination} MountDir={workspace.MountPath}");
 
         EnsureEnoughFreeSpace(sourceWimPath, workspace.RootPath);
-
-        var destination = Path.Combine(workspace.SourcePath, "install.wim");
 
         _logger.Info($"Creando imagen de trabajo (copia independiente del índice {sourceIndex})...");
         var export = await _dism
@@ -55,7 +59,7 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
 
         _logger.Info("Imagen de trabajo creada. La imagen original permanece intacta.");
 
-        return new WorkingImage
+        var image = new WorkingImage
         {
             SourcePath = sourceWimPath,
             WorkingWimPath = destination,
@@ -64,6 +68,13 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
             WorkspacePath = workspace.RootPath,
             Format = ImageFormatDetector.FromPath(destination),
         };
+
+        _logger.Info(
+            $"[WORKSPACE] Phase=export-completado OperationId={image.WorkspaceId} " +
+            $"WorkspaceId={image.WorkspaceId} SourceWimPath={image.SourcePath} " +
+            $"WorkingWimPath={image.WorkingWimPath} MountDir={image.MountPath}");
+
+        return image;
     }
 
     private static void EnsureEnoughFreeSpace(string sourceWimPath, string workspaceRoot)

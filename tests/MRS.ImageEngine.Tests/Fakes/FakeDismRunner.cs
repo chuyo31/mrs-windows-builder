@@ -24,6 +24,17 @@ internal sealed class FakeDismRunner : IDismRunner
     public bool MountTimedOut { get; set; }
     public int UnmountExitCode { get; set; }
 
+    /// <summary>Último directorio de montaje pasado a <see cref="MountWimAsync"/> (para simular escenarios dinámicos de Get-MountedWimInfo).</summary>
+    public string? LastMountDir { get; private set; }
+
+    /// <summary>
+    /// Si es <c>true</c>, <see cref="GetMountedWimInfoAsync"/> siempre reporta
+    /// <see cref="LastMountDir"/> como montado (con estado "Invalid"),
+    /// independientemente del <see cref="UnmountExitCode"/>: reproduce el caso en
+    /// el que DISM confirma el desmontaje pero el montaje sigue registrado.
+    /// </summary>
+    public bool SimulateStillMountedAfterUnmount { get; set; }
+
     // --- Inventario --------------------------------------------------------------
     public (string Output, int ExitCode) Packages { get; set; } = (string.Empty, 0);
     public (string Output, int ExitCode) Features { get; set; } = (string.Empty, 0);
@@ -51,11 +62,15 @@ internal sealed class FakeDismRunner : IDismRunner
     public Task<ProcessRunResult> GetMountedWimInfoAsync(CancellationToken cancellationToken = default)
     {
         Calls.Add("mountedinfo");
-        return Result("/Get-MountedWimInfo", MountedImageInfoExitCode, MountedImageInfoOutput, false);
+        var output = SimulateStillMountedAfterUnmount && LastMountDir is not null
+            ? $"Mount Dir : {LastMountDir}\nImage File : (simulado)\nStatus : Invalid"
+            : MountedImageInfoOutput;
+        return Result("/Get-MountedWimInfo", MountedImageInfoExitCode, output, false);
     }
 
     public Task<ProcessRunResult> MountWimAsync(string wimFile, int index, string mountDir, bool readOnly = true, CancellationToken cancellationToken = default)
     {
+        LastMountDir = mountDir;
         Calls.Add($"mount:{mountDir}:{index}:ro={readOnly}");
         return Result("/Mount-Wim", MountExitCode, string.Empty, MountTimedOut);
     }

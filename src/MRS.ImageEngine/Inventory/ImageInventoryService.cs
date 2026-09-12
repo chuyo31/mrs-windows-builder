@@ -81,6 +81,8 @@ public sealed partial class ImageInventoryService
         var mounted = false;
         var keepWorkspace = false;
 
+        LogContext("workspace-creado", workspace, wimPath);
+
         try
         {
             await RecoverOrphanMountsAsync(cancellationToken).ConfigureAwait(false);
@@ -89,6 +91,7 @@ public sealed partial class ImageInventoryService
             var mount = await _dism.MountWimAsync(wimPath, index, mountDir, readOnly: true, cancellationToken).ConfigureAwait(false);
             EnsureDismSucceeded(mount, "Montaje de la imagen");
             mounted = true;
+            LogContext("montada", workspace, wimPath);
 
             var packages = await RunCategoryAsync(
                 "paquetes", "Inventariando paquetes...",
@@ -130,11 +133,24 @@ public sealed partial class ImageInventoryService
         }
         finally
         {
+            // Confirmación explícita: solo se borra el workspace (y su directorio de
+            // montaje) cuando queda DEMOSTRADO que DISM ya no lo considera montado.
+            // Borrar un directorio que DISM todavía cree montado es exactamente lo que
+            // deja una entrada "Status: Invalid" huérfana en Get-MountedWimInfo.
+            var confirmedUnmounted = true;
             if (mounted)
-                await SafeUnmountAsync(mountDir, cancellationToken).ConfigureAwait(false);
+                confirmedUnmounted = await SafeUnmountAsync(mountDir, cancellationToken).ConfigureAwait(false);
 
-            if (keepWorkspace)
+            LogContext(confirmedUnmounted ? "desmontaje-confirmado" : "desmontaje-no-confirmado", workspace, wimPath);
+
+            if (keepWorkspace || !confirmedUnmounted)
             {
+                if (!keepWorkspace)
+                    _logger.Error(
+                        $"[INVENTORY] El montaje de este workspace sigue apareciendo en Get-MountedWimInfo tras el " +
+                        $"intento de desmontaje; se conserva el workspace en vez de borrar un directorio que DISM " +
+                        $"todavía podría considerar montado. WorkspaceId={workspace.WorkspaceId} MountDir={mountDir}");
+
                 _logger.Info($"Workspace conservado: {workspace.RootPath}");
             }
             else
@@ -144,6 +160,18 @@ public sealed partial class ImageInventoryService
             }
         }
     }
+
+    /// <summary>
+    /// Log estructurado (OperationId/WorkspaceId/SourceWimPath/WorkingWimPath/MountDir).
+    /// <see cref="BuildInventoryAsync"/> siempre crea SU PROPIO workspace, distinto
+    /// del que use un <c>RemovalEngine</c> en curso (p. ej. al reinventariar tras
+    /// aplicar cambios); estas líneas permiten comprobar en el log que nunca se ha
+    /// mezclado el MountDir de un workspace con el WIM de otro.
+    /// </summary>
+    private void LogContext(string phase, InventoryWorkspace workspace, string wimPath)
+        => _logger.Info(
+            $"[INVENTORY] Phase={phase} OperationId={workspace.WorkspaceId} WorkspaceId={workspace.WorkspaceId} " +
+            $"SourceWimPath={wimPath} WorkingWimPath={wimPath} MountDir={workspace.MountPath}");
 
     private async Task<IReadOnlyList<T>> RunCategoryAsync<T>(
         string categoryForError,
@@ -166,7 +194,14 @@ public sealed partial class ImageInventoryService
         return parse(result.StandardOutput);
     }
 
-    private async Task SafeUnmountAsync(string mountDir, CancellationToken cancellationToken)
+    /// <summary>
+    /// Intenta desmontar y devuelve si queda CONFIRMADO (vía Get-MountedWimInfo)
+    /// que el montaje ya no existe. Un <c>ExitCode != 0</c> en el propio comando de
+    /// desmontaje no basta para decidir nada por sí solo: siempre se comprueba de
+    /// forma explícita, para no borrar nunca un workspace cuyo montaje DISM
+    /// todavía pudiera considerar activo.
+    /// </summary>
+    private async Task<bool> SafeUnmountAsync(string mountDir, CancellationToken cancellationToken)
     {
         try
         {
@@ -177,18 +212,23 @@ public sealed partial class ImageInventoryService
             {
                 _logger.Error($"Fallo al desmontar la imagen. ExitCode: {unmount.ExitCode}");
                 LogDismDiagnostics(unmount);
-                return;
+                // No se asume que siga montada solo por esto: se comprueba explícitamente.
             }
 
             var mountedInfo = await _dism.GetMountedWimInfoAsync(cancellationToken).ConfigureAwait(false);
-            if (mountedInfo.Succeeded && MountDirPresent(mountedInfo.StandardOutput, mountDir))
+            var stillPresent = !mountedInfo.Succeeded || MountDirPresent(mountedInfo.StandardOutput, mountDir);
+
+            if (stillPresent)
                 _logger.Warn("La imagen sigue apareciendo como montada; revisar manualmente.");
             else
                 _logger.Info("Imagen desmontada correctamente. No quedan montajes de MRS.");
+
+            return !stillPresent;
         }
         catch (Exception ex)
         {
             _logger.Error($"Error al desmontar la imagen: {ex.Message}");
+            return false; // no se puede confirmar que ya no está montada: por seguridad, no se borra el workspace.
         }
     }
 

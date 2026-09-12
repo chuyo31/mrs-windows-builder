@@ -26,6 +26,9 @@ public sealed class InventoryWorkspace
     public string LogsPath { get; }
     public string OutputPath { get; }
 
+    /// <summary>El GUID que identifica este workspace (el nombre de <see cref="RootPath"/>), útil para logging estructurado.</summary>
+    public string WorkspaceId => Path.GetFileName(Path.TrimEndingDirectorySeparator(RootPath));
+
     /// <summary>Carpeta raíz que contiene todos los workspaces.</summary>
     public static string WorkspacesRoot(string? baseDirectory = null)
         => baseDirectory ?? Path.Combine(

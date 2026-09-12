@@ -27,4 +27,34 @@ public sealed class WorkingImage
     public bool IsMounted { get; set; }
 
     public bool IsCommitted { get; set; }
+
+    /// <summary>
+    /// Identificador del workspace (el GUID de <see cref="WorkspacePath"/>), para
+    /// logging estructurado. Toda esta operación debe usar un único
+    /// WorkspaceId: si <see cref="MountPath"/> o <see cref="WorkingWimPath"/>
+    /// pertenecieran a un workspace distinto, sería exactamente el bug de P09
+    /// (mezclar el MountDir de un workspace con el WIM de otro).
+    /// </summary>
+    public string WorkspaceId => Path.GetFileName(Path.TrimEndingDirectorySeparator(WorkspacePath));
+
+    /// <summary>
+    /// Comprueba que <see cref="MountPath"/> y <see cref="WorkingWimPath"/>
+    /// cuelgan realmente de <see cref="WorkspacePath"/>. Si alguno perteneciera a
+    /// otro workspace, esta operación estaría mezclando dos contextos distintos.
+    /// </summary>
+    public bool HasConsistentWorkspace()
+    {
+        try
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(WorkspacePath)) + Path.DirectorySeparatorChar;
+            return IsUnderRoot(MountPath, root) && IsUnderRoot(WorkingWimPath, root);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsUnderRoot(string path, string root)
+        => Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
 }

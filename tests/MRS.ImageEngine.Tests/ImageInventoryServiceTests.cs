@@ -151,6 +151,22 @@ public sealed class ImageInventoryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildInventoryAsync_keeps_workspace_when_unmount_reports_success_but_mount_is_still_registered()
+    {
+        // Reproduce el bug de P09: DISM confirma el desmontaje (ExitCode 0) pero
+        // Get-MountedWimInfo sigue listando el mismo directorio (p. ej. como
+        // "Invalid"). No se debe borrar un directorio que DISM todavía podría
+        // considerar montado: eso es justo lo que deja una entrada huérfana.
+        var runner = FullyPopulatedRunner();
+        runner.UnmountExitCode = 0;
+        runner.SimulateStillMountedAfterUnmount = true;
+
+        await Service(runner).BuildInventoryAsync(@"X:\sources\install.wim", index: 1);
+
+        Assert.True(Directory.EnumerateDirectories(_workspaceRoot).Any()); // workspace conservado, nunca borrado
+    }
+
+    [Fact]
     public async Task BuildInventoryFromIsoAsync_requires_an_iso_mounter()
     {
         var runner = FullyPopulatedRunner();
