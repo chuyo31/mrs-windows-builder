@@ -52,11 +52,14 @@ de bibliotecas siguen siendo **stubs**.
 
 ---
 
-## Estado actual — P7
+## Estado actual — P7 (+ corrección P08)
 
-Primer `RemovalEngine` real: aplica un `RemovalPlan` confirmado sobre una
-**copia de trabajo** de la imagen (la ISO original nunca se toca) (ver
-[`prompts/07-resultado.md`](prompts/07-resultado.md)).
+Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
+(Clipchamp eliminado, commit y desmontaje confirmados): aplica un
+`RemovalPlan` confirmado sobre una **copia de trabajo** de la imagen (la ISO
+original nunca se toca) (ver
+[`prompts/07-resultado.md`](prompts/07-resultado.md) y la corrección de
+finalización de UI en [`prompts/08-resultado.md`](prompts/08-resultado.md)).
 
 **Funciona:**
 
@@ -76,7 +79,18 @@ Primer `RemovalEngine` real: aplica un `RemovalPlan` confirmado sobre una
 - Pantalla **APLICANDO CAMBIOS**: estado, progreso "X / Y", lista con
   ○/⏳/✓/✗/⊘ por componente, cancelación cooperativa.
 - Tras un commit, reinventaría la copia de trabajo y compara con
-  `RemovalVerifier` (eliminado/todavía presente/cambios inesperados).
+  `RemovalVerifier` (eliminado/todavía presente/cambios inesperados) — este
+  reinventario corre **después** de desbloquear la pantalla, nunca antes
+  (corrección P08: ver más abajo).
+- Limpieza idempotente: un `ExitCode != 0` en Commit/Discard no se trata como
+  fallo si `Get-MountedWimInfo` confirma que el montaje ya no existe.
+
+**Corrección P08** — tras la prueba real, "APLICANDO CAMBIOS" quedaba
+bloqueada después del aviso de éxito: "Cerrar" y "Cancelar" no respondían
+porque el desbloqueo de la UI esperaba a un reinventario adicional (fuera de
+la operación transaccional del motor). Solucionado: la UI se desbloquea en
+cuanto el `RemovalEngine` termina (Commit + Unmount + su verificación
+interna incluidos), antes del aviso y del reinventario.
 
 **Todavía NO hace:**
 

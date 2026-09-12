@@ -193,9 +193,21 @@ public sealed class RemovalEngine : IRemovalEngine
 
         if (!commit.Succeeded)
         {
+            // Idempotencia (Parte "limpieza idempotente" de P08): un ExitCode != 0 en
+            // /Unmount-Wim /Commit no es necesariamente un fallo real si el montaje ya
+            // no existe (p. ej. una operación previa ya lo desmontó). Nunca se asume
+            // éxito solo por esto: se comprueba explícitamente con Get-MountedWimInfo.
+            var stillMounted = await IsStillMountedAsync(image.MountPath).ConfigureAwait(false);
+            if (!stillMounted)
+            {
+                _logger.Warn($"El commit devolvió ExitCode {commit.ExitCode}, pero la imagen ya no aparece montada; se considera confirmada.");
+                image.IsCommitted = true;
+                _logger.Info("[REMOVAL] Cambios aplicados y confirmados correctamente.");
+                return BuildResult(RemovalExecutionPhase.Completed, true, image, executed, failed, warnings, errors, true, false);
+            }
+
             errors.Add($"No se pudo confirmar (commit) la imagen. ExitCode: {commit.ExitCode}");
             _logger.Error($"[REMOVAL] ERROR: commit falló. ExitCode={commit.ExitCode}");
-            await VerifyNoMountsRemainAsync(image.MountPath).ConfigureAwait(false);
             return BuildResult(RemovalExecutionPhase.Failed, false, image, executed, failed, warnings, errors, false, false);
         }
 
@@ -276,11 +288,28 @@ public sealed class RemovalEngine : IRemovalEngine
     {
         try
         {
-            var unmount = await _dism.UnmountWimDiscardAsync(image.MountPath, CancellationToken.None).ConfigureAwait(false);
-            if (!unmount.Succeeded)
-                _logger.Error($"No se pudo desmontar (discard) la imagen. ExitCode: {unmount.ExitCode}");
+            // Idempotente: si ya no está montada (p. ej. un finally repetido, o un
+            // commit/discard previo que ya la liberó), no hay nada que descartar y no
+            // se trata como error.
+            if (!image.IsMounted)
+            {
+                _logger.Info("La imagen ya estaba desmontada; no hay nada que descartar.");
+                await VerifyNoMountsRemainAsync(image.MountPath).ConfigureAwait(false);
+                return;
+            }
 
+            var unmount = await _dism.UnmountWimDiscardAsync(image.MountPath, CancellationToken.None).ConfigureAwait(false);
             image.IsMounted = false;
+
+            if (!unmount.Succeeded)
+            {
+                var stillMounted = await IsStillMountedAsync(image.MountPath).ConfigureAwait(false);
+                if (stillMounted)
+                    _logger.Error($"No se pudo desmontar (discard) la imagen. ExitCode: {unmount.ExitCode}");
+                else
+                    _logger.Info($"El discard devolvió ExitCode {unmount.ExitCode}, pero la imagen ya no aparece montada; se considera desmontada.");
+            }
+
             await VerifyNoMountsRemainAsync(image.MountPath).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -289,20 +318,29 @@ public sealed class RemovalEngine : IRemovalEngine
         }
     }
 
-    private async Task VerifyNoMountsRemainAsync(string mountDir)
+    private async Task<bool> IsStillMountedAsync(string mountDir)
     {
         try
         {
             var info = await _dism.GetMountedWimInfoAsync(CancellationToken.None).ConfigureAwait(false);
-            if (info.Succeeded && MountedWimInfo.ContainsMountDir(info.StandardOutput, mountDir))
-                _logger.Warn("La imagen sigue apareciendo como montada; revisar manualmente.");
-            else
-                _logger.Info("Ningún montaje abierto tras la operación.");
+            // Si no se puede consultar el estado, no se asume que ya está desmontada:
+            // se prefiere no ocultar un posible error real.
+            return !info.Succeeded || MountedWimInfo.ContainsMountDir(info.StandardOutput, mountDir);
         }
         catch (Exception ex)
         {
             _logger.Warn($"No se pudo verificar el estado de los montajes: {ex.Message}");
+            return true;
         }
+    }
+
+    private async Task VerifyNoMountsRemainAsync(string mountDir)
+    {
+        var stillMounted = await IsStillMountedAsync(mountDir).ConfigureAwait(false);
+        if (stillMounted)
+            _logger.Warn("La imagen sigue apareciendo como montada; revisar manualmente.");
+        else
+            _logger.Info("Ningún montaje abierto tras la operación.");
     }
 
     private async Task RecoverOrphanMountsAsync(WorkingImage image, CancellationToken cancellationToken)

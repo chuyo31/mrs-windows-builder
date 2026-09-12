@@ -75,6 +75,8 @@ public partial class MainWindow : Window
     private RemovalPlan? _confirmedPlan;
     private List<ExecutionRow> _executionRows = new();
     private CancellationTokenSource? _executionCts;
+    private bool _isApplyingChanges;
+    private bool _executionUiUnlocked;
     private string? _selectedProfile;
 
     public MainWindow()
@@ -533,6 +535,9 @@ public partial class MainWindow : Window
 
     private async void PlanConfirmButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isApplyingChanges)
+            return; // ya hay una aplicación de cambios en curso: no se permite solapar otra.
+
         var plan = BuildPlanFromCurrentSelection();
         if (plan is null)
             return;
@@ -573,10 +578,11 @@ public partial class MainWindow : Window
     {
         ShowExecutionScreen(plan);
         _executionCts = new CancellationTokenSource();
+        _isApplyingChanges = true;
+        _executionUiUnlocked = false;
         _logger.Entry += OnExecutionLogEntry;
 
         WorkingImage? workingImage = null;
-        RemovalExecutionResult? result = null;
 
         try
         {
@@ -594,15 +600,24 @@ public partial class MainWindow : Window
             }
 
             ExecutionStatusText.Text = "Montando imagen...";
-            result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token);
+            var result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token);
 
             ReconcileExecutionRows(result);
+
+            // La operación transaccional (Apply -> Commit -> Unmount -> comprobación
+            // interna de montajes) ya ha terminado POR COMPLETO en este punto: la UI
+            // se desbloquea aquí, antes de mostrar cualquier aviso o de lanzar el
+            // reinventario opcional, para que "Cerrar" nunca dependa de un DISM extra.
+            UnlockExecutionUi();
 
             if (result.Committed)
             {
                 StatusText.Text = "Cambios aplicados";
                 MessageBox.Show(this, $"Cambios aplicados correctamente ({result.ActionsExecuted.Count} acción(es)).",
                     "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                // Diagnóstico best-effort: no forma parte de la operación transaccional
+                // y su duración (o un fallo) nunca debe volver a bloquear la UI.
                 await VerifyExecutionAsync(workingImage, result);
             }
             else if (result.Phase == RemovalExecutionPhase.Cancelled)
@@ -633,10 +648,31 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _logger.Entry -= OnExecutionLogEntry;
-            ExecutionCancelButton.IsEnabled = false;
-            ExecutionCloseButton.IsEnabled = true;
+            // Red de seguridad: garantiza que la UI queda desbloqueada pase lo que
+            // pase (fallo antes de montar, cancelación temprana, excepción
+            // inesperada). Idempotente: si ya se desbloqueó arriba, no hace nada.
+            UnlockExecutionUi();
+            _executionCts?.Dispose();
+            _executionCts = null;
         }
+    }
+
+    /// <summary>
+    /// Marca terminada la operación de aplicación de cambios: desactiva Cancelar,
+    /// habilita Cerrar y permite iniciar una nueva operación. Idempotente a
+    /// propósito, para poder llamarse tanto nada más terminar la ejecución como,
+    /// de forma defensiva, en el <c>finally</c>.
+    /// </summary>
+    private void UnlockExecutionUi()
+    {
+        if (_executionUiUnlocked)
+            return;
+
+        _executionUiUnlocked = true;
+        _isApplyingChanges = false;
+        _logger.Entry -= OnExecutionLogEntry;
+        ExecutionCancelButton.IsEnabled = false;
+        ExecutionCloseButton.IsEnabled = true;
     }
 
     private async Task VerifyExecutionAsync(WorkingImage workingImage, RemovalExecutionResult result)

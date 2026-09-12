@@ -170,6 +170,24 @@ public sealed class RemovalEngineTests : IDisposable
         Assert.True(result.Discarded);
     }
 
+    [Fact]
+    public async Task Discard_failure_is_not_treated_as_a_new_error_when_the_mount_already_disappeared()
+    {
+        // Limpieza idempotente (P08): un ExitCode != 0 en /Discard no debe
+        // convertirse en un error adicional si el montaje ya no existe.
+        var dism = new FakeDismRunner { UnmountDiscardExitCode = 5, MountedWimInfoOutput = "No mounted images found." };
+        dism.ActionExitCodes["Clipchamp"] = 123; // provoca el fallo original que dispara el discard
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        var clipchamp = PlanFactory.Item("appx:Clipchamp", "Clipchamp", ComponentSourceType.Appx, RemovalActionType.RemoveAppx);
+        var result = await engine.ExecuteAsync(NewImage(), PlanFactory.Plan(clipchamp));
+
+        Assert.False(result.Success);
+        Assert.Equal(RemovalExecutionPhase.Failed, result.Phase);
+        Assert.Single(result.ActionsFailed);
+        Assert.Single(result.Errors); // solo el fallo original de la acción, sin ruido añadido por el discard
+    }
+
     // ================= SEGURIDAD =================
 
     [Fact]
@@ -297,17 +315,38 @@ public sealed class RemovalEngineTests : IDisposable
     }
 
     [Fact]
-    public async Task Commit_failure_is_reported_as_failed_and_not_committed()
+    public async Task Commit_failure_is_reported_as_failed_when_the_mount_still_exists()
     {
-        var dism = new FakeDismRunner { UnmountCommitExitCode = 87 };
+        var image = NewImage();
+        var dism = new FakeDismRunner
+        {
+            UnmountCommitExitCode = 87,
+            MountedWimInfoOutput = $"Mount Dir : {image.MountPath}\nStatus : Ok",
+        };
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        var clipchamp = PlanFactory.Item("appx:Clipchamp", "Clipchamp", ComponentSourceType.Appx, RemovalActionType.RemoveAppx);
+        var result = await engine.ExecuteAsync(image, PlanFactory.Plan(clipchamp));
+
+        Assert.False(result.Success);
+        Assert.False(result.Committed);
+        Assert.Equal(RemovalExecutionPhase.Failed, result.Phase);
+    }
+
+    [Fact]
+    public async Task Commit_failure_is_idempotently_treated_as_success_when_already_unmounted()
+    {
+        // Limpieza idempotente (P08): un ExitCode != 0 en /Commit no implica fallo
+        // real si Get-MountedWimInfo confirma que la imagen ya no está montada.
+        var dism = new FakeDismRunner { UnmountCommitExitCode = 87, MountedWimInfoOutput = "No mounted images found." };
         var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
 
         var clipchamp = PlanFactory.Item("appx:Clipchamp", "Clipchamp", ComponentSourceType.Appx, RemovalActionType.RemoveAppx);
         var result = await engine.ExecuteAsync(NewImage(), PlanFactory.Plan(clipchamp));
 
-        Assert.False(result.Success);
-        Assert.False(result.Committed);
-        Assert.Equal(RemovalExecutionPhase.Failed, result.Phase);
+        Assert.True(result.Success);
+        Assert.True(result.Committed);
+        Assert.Equal(RemovalExecutionPhase.Completed, result.Phase);
     }
 
     // ================= POST-VALIDATION =================
