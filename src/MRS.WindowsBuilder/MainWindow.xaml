@@ -950,29 +950,88 @@
                 <TextBlock Grid.Row="0" Text="PLAN DE MODIFICACIÓN" Foreground="{StaticResource TextPrimary}"
                            FontSize="18" FontWeight="SemiBold" Margin="0,0,0,14"/>
 
-                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="PlanItemsList">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,12">
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12"
-                                                       Foreground="{Binding StatusBrush}"/>
-                                            <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" Margin="0,4,0,2"/>
-                                            <TextBlock Text="{Binding Subtitle}" FontSize="12"
-                                                       Foreground="{StaticResource TextSecondary}"/>
-                                            <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap"
-                                                       Foreground="{StaticResource TextSecondary}" Margin="0,4,0,0"
-                                                       Visibility="{Binding DetailVisibility}"/>
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Border>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="320"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,10,0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="PlanItemsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,12">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12"
+                                                           Foreground="{Binding StatusBrush}"/>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" Margin="0,4,0,2"/>
+                                                <TextBlock Text="{Binding Subtitle}" FontSize="12"
+                                                           Foreground="{StaticResource TextSecondary}"/>
+                                                <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap"
+                                                           Foreground="{StaticResource TextSecondary}" Margin="0,4,0,0"
+                                                           Visibility="{Binding DetailVisibility}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+
+                    <!-- OOBE / compatibilidad de instalación (P15). Independiente del catálogo de
+                         componentes y de RemovalPlan: solo configura el comportamiento del
+                         instalador/OOBE de la ISO final. No ejecuta nada; MRS.ISOEngine todavía no
+                         genera la ISO (ver prompts/15-resultado.md). -->
+                    <Border Grid.Column="1" Style="{StaticResource Card}" Margin="10,0,0,0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="OPCIONES DE INSTALACIÓN" Style="{StaticResource CardTitle}"/>
+
+                                <CheckBox x:Name="AllowLocalAccountCheckBox" Content="Permitir cuenta local"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <CheckBox x:Name="AllowOfflineOobeCheckBox" Content="Permitir instalación sin conexión"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+
+                                <TextBlock Text="COMPATIBILIDAD DE HARDWARE" Foreground="{StaticResource TextSecondary}"
+                                           FontSize="11" FontWeight="SemiBold" Margin="0,14,0,6"/>
+
+                                <CheckBox x:Name="BypassTpmCheckBox" Content="Omitir requisito TPM 2.0"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <CheckBox x:Name="BypassSecureBootCheckBox" Content="Omitir requisito Secure Boot"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <CheckBox x:Name="BypassCpuCheckBox" Content="Omitir requisito de CPU"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <CheckBox x:Name="BypassRamCheckBox" Content="Omitir requisito de RAM"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <CheckBox x:Name="BypassStorageCheckBox" Content="Omitir requisito de almacenamiento"
+                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                          IsChecked="True" Margin="0,0,0,6"
+                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+
+                                <TextBlock Text="Estas opciones permiten utilizar la ISO en equipos que no cumplen los requisitos oficiales de Windows 11."
+                                           Foreground="{StaticResource TextSecondary}" FontSize="11"
+                                           TextWrapping="Wrap" Margin="0,10,0,6"/>
+                                <TextBlock Text="El bypass de RAM permite superar la comprobación de instalación. No garantiza un funcionamiento fluido con 2 GB de RAM."
+                                           Foreground="{StaticResource TextSecondary}" FontSize="11"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
 
                 <TextBlock Grid.Row="2" x:Name="PlanSummaryText" Margin="0,12,0,0"
                            Foreground="{StaticResource TextSecondary}" FontSize="12"/>

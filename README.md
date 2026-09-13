@@ -35,25 +35,28 @@ varias bibliotecas de motor:
 | Proyecto | Framework | Rol |
 |---|---|---|
 | `MRS.WindowsBuilder` | `net8.0-windows` (WPF) | Aplicación de escritorio y UI. |
-| `MRS.ISOEngine` | `net8.0` | Montaje/extracción y regeneración de la ISO. |
+| `MRS.ISOEngine` | `net8.0` | Workspace de generación, planificación de opciones de instalación y validación previa a generar la ISO. Todavía no monta ni regenera ninguna ISO real. |
 | `MRS.ImageEngine` | `net8.0` | Lectura de metadatos de la imagen (WIM/ESD), ediciones. |
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
 | `MRS.RemovalPlanning` | `net8.0` | Motor de selección: RemovalPlan verificable, sin ejecutar nada. |
 | `MRS.RemovalEngine` | `net8.0` | Ejecuta el RemovalPlan sobre una copia de trabajo (Export/Mount/DISM/Commit-Discard). |
 | `MRS.ProfileEngine` | `net8.0` | Perfiles de eliminación en JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): producen una selección de ComponentId, nunca ejecutan nada. |
+| `MRS.InstallationOptions` | `net8.0` | Configuración del instalador/OOBE de la ISO final (cuenta local, OOBE sin conexión, bypass de hardware). Independiente del catálogo de componentes. |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
 `MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog`,
-`MRS.RemovalPlanning`, `MRS.RemovalEngine` y `MRS.ProfileEngine` ya están
-implementados: análisis, inventario real, catálogo, plan de eliminación,
-ejecución real sobre una copia de trabajo (la ISO original nunca se
-modifica) y perfiles predefinidos. El resto de bibliotecas siguen siendo
-**stubs**.
+`MRS.RemovalPlanning`, `MRS.RemovalEngine`, `MRS.ProfileEngine` y
+`MRS.InstallationOptions` ya están implementados: análisis, inventario
+real, catálogo, plan de eliminación, ejecución real sobre una copia de
+trabajo (la ISO original nunca se modifica), perfiles predefinidos y
+configuración de instalación/OOBE. `MRS.ISOEngine` tiene ya su modelo de
+workspace/planificación/validación, pero todavía no genera ninguna ISO real
+(ver P15). `MRS.PostInstall` sigue siendo un **stub**.
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -165,12 +168,29 @@ desde un perfil seguro parte de valores seguros por defecto — nunca se
 hereda una configuración insegura entre pantallas ni entre perfiles (ver
 [`prompts/14-resultado.md`](prompts/14-resultado.md)).
 
+**P15** — `MRS.InstallationOptions` + preparación de `MRS.ISOEngine` (ver
+[`prompts/15-resultado.md`](prompts/15-resultado.md)): configuración del
+comportamiento del instalador/OOBE de la ISO final (cuenta local, OOBE sin
+conexión, y bypass independiente de TPM/Secure Boot/CPU/RAM/almacenamiento),
+deliberadamente separada de `SecurityOptions`/`ProfileDefinition`/
+`RemovalPlan`. `MRS.ISOEngine` gana un modelo de workspace de generación,
+un planificador de modificaciones (`InstallationConfigurationPlanner`) y un
+validador previo a generar la ISO (`GenerationWorkspaceValidator`) — pero
+**todavía no monta ni modifica ningún `boot.wim` real**: esta fase deja
+preparado el motor (modelo + planificación + validación), documentando qué
+mecanismos son fiables (LabConfig para TPM/Secure Boot/CPU/RAM,
+`autounattend.xml` para cuenta local) y cuáles quedan pendientes de
+confirmación empírica (OOBE sin conexión, bypass de almacenamiento). El
+bypass de RAM nunca se presenta como "Windows 11 funcionando bien con 2 GB":
+solo evita el bloqueo del instalador.
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
-  solo configuración + planificación + UI + protección), `/Remove` de
-  features, limpieza de checkpoints/ResetBase, compresión, creación de la
-  ISO final, PCPI ni App Packs.
+  solo configuración + planificación + UI + protección), aplicar de verdad
+  ninguna opción de instalación de P15 sobre un `boot.wim` real, `/Remove`
+  de features, limpieza de checkpoints/ResetBase, compresión, creación de
+  la ISO final, PCPI ni App Packs.
 
 ---
 
@@ -203,14 +223,17 @@ src/
   MRS.RemovalPlanning/    RemovalPlanBuilder/Validator/Serializer (sin referenciar MRS.DismEngine)
   MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard), telemetría ProgressInfo
   MRS.ProfileEngine/      Perfiles JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): solo producen una selección de ComponentId
-  MRS.ISOEngine/          (stub)
+  MRS.InstallationOptions/ Configuración de instalador/OOBE de la ISO final (cuenta local, OOBE offline, bypass de hardware)
+  MRS.ISOEngine/          Workspace de generación, planificador de opciones de instalación, validación previa a generar la ISO
   MRS.PostInstall/        (stub)
 tests/
-  MRS.ImageEngine.Tests/        Tests xUnit (parsers, análisis, inventario, workspace)
-  MRS.ComponentCatalog.Tests/   Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
-  MRS.RemovalPlanning.Tests/    Tests xUnit (selección, protección, dependencias, plan, validación, JSON)
-  MRS.RemovalEngine.Tests/      Tests xUnit (ejecución transaccional, workspace, telemetría de progreso)
-  MRS.ProfileEngine.Tests/      Tests xUnit (carga de JSON, validación, selección de ComponentId)
+  MRS.ImageEngine.Tests/          Tests xUnit (parsers, análisis, inventario, workspace)
+  MRS.ComponentCatalog.Tests/     Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
+  MRS.RemovalPlanning.Tests/      Tests xUnit (selección, protección, dependencias, plan, validación, JSON)
+  MRS.RemovalEngine.Tests/        Tests xUnit (ejecución transaccional, workspace, telemetría de progreso)
+  MRS.ProfileEngine.Tests/        Tests xUnit (carga de JSON, validación, selección de ComponentId)
+  MRS.InstallationOptions.Tests/  Tests xUnit (defaults, independencia de bypasses, serialización)
+  MRS.ISOEngine.Tests/            Tests xUnit (planificador de instalación, validación de workspace)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
 profiles/                 Perfiles de eliminación en JSON (minimal/light/recommended/clean/custom)
@@ -235,4 +258,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P12** – corrección: sustituidos los botones de perfil legados (NORMAL/LIGHT/MEDIUM, anteriores a P11) por los 5 perfiles reales, reutilizando la misma lógica en la pantalla inicial (preselección) y en COMPONENTES.
 - [x] **P13** – opciones de seguridad por perfil (`SecurityOptions`: mantener Defender/Windows Update). Mínimo/Ligero/Recomendado los protegen siempre; Limpio/Personalizado permiten decidirlo desde "OPCIONES AVANZADAS". Solo configuración/planificación — sin ejecutar ninguna desactivación real (ver `prompts/13-resultado.md`).
 - [x] **P14** – corrección: "OPCIONES AVANZADAS" ahora también aparece en la pantalla inicial al elegir Limpio/Personalizado (antes solo vivía en COMPONENTES); una única fuente de verdad (`_currentSecurityOptions`) sincroniza ambas pantallas, y la configuración se conserva al pulsar "Continuar" (ver `prompts/14-resultado.md`).
-- [ ] **P15** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.
+- [x] **P15** – `MRS.InstallationOptions` (cuenta local/OOBE sin conexión/bypass de TPM-SecureBoot-CPU-RAM-almacenamiento) + preparación de `MRS.ISOEngine` (workspace de generación, planificador, validación). Investigación de mecanismos documentada; sin ejecución real sobre `boot.wim` todavía (ver `prompts/15-resultado.md`).
+- [ ] **P16** – `MRS.PostInstall`: tweaks/post-instalación, aplicación real de P15 sobre `boot.wim`, y regeneración de la ISO final (`oscdimg`).

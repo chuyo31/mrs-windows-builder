@@ -34,6 +34,12 @@ using RemovalEngineClass = MRS.RemovalEngine.RemovalEngine;
 // igual que en P11 -- así que aquí, el único punto que conoce los dos mundos, se
 // desambigua con un alias explícito para el del catálogo.
 using CatalogSecurityOptions = MRS.ComponentCatalog.Models.SecurityOptions;
+// "InstallationOptions" (P15) es a la vez un namespace (MRS.InstallationOptions) y el
+// nombre del tipo que contiene (MRS.InstallationOptions.Models.InstallationOptions);
+// mismo caso que RemovalEngine/ProfileEngine/SecurityOptions -- se referencia con un
+// alias de nombre distinto (un alias con el MISMO nombre que el tipo no basta: el
+// namespace sigue ganando en posiciones de tipo/atributo).
+using InstallationOptionsModel = MRS.InstallationOptions.Models.InstallationOptions;
 
 namespace MRS.WindowsBuilder;
 
@@ -89,6 +95,7 @@ public partial class MainWindow : Window
     private ProfileLoadResult? _profileLoadResult;
     private string? _activeCatalogProfileId;
     private CatalogSecurityOptions _currentSecurityOptions = CatalogSecurityOptions.Safe;
+    private InstallationOptionsModel _installationOptions = InstallationOptionsModel.Default;
 
     public MainWindow()
     {
@@ -879,9 +886,67 @@ public partial class MainWindow : Window
             $"{plan.TotalSelected} seleccionados    {plan.TotalAllowed} acciones permitidas    " +
             $"{plan.TotalBlocked} bloqueados    {plan.Warnings.Count} advertencias";
 
+        RefreshInstallationOptionsCheckboxes();
+
         ComponentsOverlay.Visibility = Visibility.Collapsed;
         PlanOverlay.Visibility = Visibility.Visible;
         StatusText.Text = "Plan de modificación generado";
+    }
+
+    // ---- Opciones de instalación / OOBE / compatibilidad (P15) ---------------
+    //
+    // Independiente del catálogo de componentes y de RemovalPlan (P15, sección 1):
+    // no decide qué se elimina ni afecta a ninguna protección. Solo configura el
+    // comportamiento del instalador/OOBE de la ISO final. MRS.ISOEngine todavía no
+    // genera ninguna ISO: esto solo captura la configuración para cuando exista esa
+    // fase (ver prompts/15-resultado.md).
+
+    private void RefreshInstallationOptionsCheckboxes()
+    {
+        var checkBoxes = new[]
+        {
+            AllowLocalAccountCheckBox, AllowOfflineOobeCheckBox,
+            BypassTpmCheckBox, BypassSecureBootCheckBox, BypassCpuCheckBox, BypassRamCheckBox, BypassStorageCheckBox,
+        };
+
+        foreach (var checkBox in checkBoxes)
+        {
+            checkBox.Checked -= InstallationOption_Changed;
+            checkBox.Unchecked -= InstallationOption_Changed;
+        }
+
+        AllowLocalAccountCheckBox.IsChecked = _installationOptions.AllowLocalAccount;
+        AllowOfflineOobeCheckBox.IsChecked = _installationOptions.AllowOfflineOobe;
+        BypassTpmCheckBox.IsChecked = _installationOptions.BypassTpm;
+        BypassSecureBootCheckBox.IsChecked = _installationOptions.BypassSecureBoot;
+        BypassCpuCheckBox.IsChecked = _installationOptions.BypassCpu;
+        BypassRamCheckBox.IsChecked = _installationOptions.BypassRam;
+        BypassStorageCheckBox.IsChecked = _installationOptions.BypassStorage;
+
+        foreach (var checkBox in checkBoxes)
+        {
+            checkBox.Checked += InstallationOption_Changed;
+            checkBox.Unchecked += InstallationOption_Changed;
+        }
+    }
+
+    /// <summary>
+    /// Solo actualiza <see cref="_installationOptions"/> en memoria; nunca ejecuta
+    /// nada sobre Windows, sobre la imagen ni sobre ningún WIM. Cada casilla es
+    /// independiente: desactivar una nunca cambia ninguna otra.
+    /// </summary>
+    private void InstallationOption_Changed(object sender, RoutedEventArgs e)
+    {
+        _installationOptions = _installationOptions with
+        {
+            AllowLocalAccount = AllowLocalAccountCheckBox.IsChecked == true,
+            AllowOfflineOobe = AllowOfflineOobeCheckBox.IsChecked == true,
+            BypassTpm = BypassTpmCheckBox.IsChecked == true,
+            BypassSecureBoot = BypassSecureBootCheckBox.IsChecked == true,
+            BypassCpu = BypassCpuCheckBox.IsChecked == true,
+            BypassRam = BypassRamCheckBox.IsChecked == true,
+            BypassStorage = BypassStorageCheckBox.IsChecked == true,
+        };
     }
 
     private void PlanBackButton_Click(object sender, RoutedEventArgs e)
