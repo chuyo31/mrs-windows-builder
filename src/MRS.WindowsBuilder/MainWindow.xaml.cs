@@ -81,7 +81,6 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _executionCts;
     private bool _isApplyingChanges;
     private bool _executionUiUnlocked;
-    private string? _selectedProfile;
     private ProfileLoadResult? _profileLoadResult;
     private string? _activeCatalogProfileId;
 
@@ -290,15 +289,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Profile_Checked(object sender, RoutedEventArgs e)
-    {
-        if (sender is RadioButton rb)
-        {
-            _selectedProfile = rb.Content?.ToString();
-            _logger.Info($"Perfil seleccionado: {_selectedProfile}");
-        }
-    }
-
     // ---- Continuar -> Inventario -----------------------------------------
 
     private async void ContinueButton_Click(object sender, RoutedEventArgs e)
@@ -443,7 +433,15 @@ public partial class MainWindow : Window
         RenderComponents();
         ClearComponentDetail();
         UpdateSelectionSummary();
+
+        // Si se preseleccionó un perfil en la pantalla inicial (o quedó activo de un
+        // catálogo anterior), aplicarlo ahora de verdad: ya existen ComponentId reales
+        // contra los que filtrar/proteger. Reutiliza exactamente la misma lógica
+        // (ApplyProfile), sin duplicarla.
+        var preSelectedProfileId = _activeCatalogProfileId;
         ResetProfileBar();
+        if (preSelectedProfileId is not null)
+            ApplyProfile(preSelectedProfileId);
 
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Visible;
@@ -456,7 +454,7 @@ public partial class MainWindow : Window
         _activeCatalogProfileId = null;
         ProfileInfoText.Text = "Selecciona un perfil o marca componentes manualmente.";
 
-        foreach (var btn in new[] { ProfileMinimalButton, ProfileLightButton, ProfileRecommendedButton, ProfileCleanButton, ProfileCustomButton })
+        foreach (var btn in ProfileButtons)
             btn.Style = (Style)FindResource("OutlineButton");
     }
 
@@ -523,21 +521,46 @@ public partial class MainWindow : Window
     private void ComponentSelectionCheckBox_Changed(object sender, RoutedEventArgs e)
         => UpdateSelectionSummary();
 
-    // ---- Perfiles (P11) -----------------------------------------------------
+    // ---- Perfiles (P11/P12) --------------------------------------------------
 
     /// <summary>
-    /// Aplica un perfil sobre la selección actual: Selección de perfil -&gt; ComponentId
-    /// candidatos -&gt; filtrado por lo que exista realmente en <see cref="_allComponentRows"/>
-    /// -&gt; checkboxes. Nunca ejecuta nada ni salta el flujo Catalog -&gt; ProtectionEngine -&gt;
-    /// RemovalPlan: solo cambia qué casillas quedan marcadas, exactamente como si el
-    /// usuario las hubiera marcado a mano.
+    /// Los 5 botones de perfil reales (minimal/light/recommended/clean/custom),
+    /// tanto los de la pantalla inicial (preselección, antes de tener catálogo)
+    /// como los de la pantalla COMPONENTES (aplicación real). Un único punto de
+    /// verdad para resaltar el perfil activo en ambas zonas sin duplicar lógica.
+    /// </summary>
+    private IEnumerable<Button> ProfileButtons => new[]
+    {
+        ProfileMinimalButton, ProfileLightButton, ProfileRecommendedButton, ProfileCleanButton, ProfileCustomButton,
+        ProfilePreMinimalButton, ProfilePreLightButton, ProfilePreRecommendedButton, ProfilePreCleanButton, ProfilePreCustomButton,
+    };
+
+    /// <summary>
+    /// Único manejador para los 10 botones de perfil (5 en la pantalla inicial, 5 en
+    /// COMPONENTES): ambos comparten el mismo <c>Tag</c> (el id real del perfil) y la
+    /// misma lógica de aplicación, para no duplicarla entre pantallas.
     /// </summary>
     private void ProfileButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.Tag is not string profileId)
             return;
 
-        HighlightActiveProfileButton(button);
+        ApplyProfile(profileId);
+    }
+
+    /// <summary>
+    /// Aplica un perfil sobre la selección actual: Selección de perfil -&gt; ComponentId
+    /// candidatos -&gt; filtrado por lo que exista realmente en <see cref="_allComponentRows"/>
+    /// -&gt; checkboxes. Nunca ejecuta nada ni salta el flujo Catalog -&gt; ProtectionEngine -&gt;
+    /// RemovalPlan: solo cambia qué casillas quedan marcadas, exactamente como si el
+    /// usuario las hubiera marcado a mano. Si todavía no hay catálogo (se llamó desde la
+    /// pantalla inicial, antes de analizar la ISO), solo queda como preselección: se
+    /// vuelve a invocar automáticamente en cuanto <see cref="ShowComponents"/> genera el
+    /// catálogo real.
+    /// </summary>
+    private void ApplyProfile(string profileId)
+    {
+        HighlightActiveProfileButton(profileId);
 
         if (_profileLoadResult is null)
             return;
@@ -575,7 +598,7 @@ public partial class MainWindow : Window
             // ProtectionEngine/RemovalPlanning, no de ProfileEngine.
             row.IsSelected = row.Editable && selectedIds.Contains(row.Component.Id);
 
-        RenderComponents(); // refresca los checkboxes visibles
+        RenderComponents(); // refresca los checkboxes visibles (no-op si aún no hay catálogo)
         UpdateSelectionSummary();
 
         var pendingNote = profile.ComponentIds.Count == 0
@@ -596,16 +619,12 @@ public partial class MainWindow : Window
                      $"{selection.UnknownComponentIds.Count} desconocidos, {selection.BlockedComponentIds.Count} bloqueados.");
     }
 
-    private void HighlightActiveProfileButton(Button active)
+    private void HighlightActiveProfileButton(string profileId)
     {
-        var buttons = new[]
-        {
-            ProfileMinimalButton, ProfileLightButton, ProfileRecommendedButton,
-            ProfileCleanButton, ProfileCustomButton,
-        };
-
-        foreach (var btn in buttons)
-            btn.Style = (Style)FindResource(btn == active ? "AccentButton" : "OutlineButton");
+        foreach (var btn in ProfileButtons)
+            btn.Style = (Style)FindResource(
+                string.Equals(btn.Tag as string, profileId, StringComparison.OrdinalIgnoreCase)
+                    ? "AccentButton" : "OutlineButton");
     }
 
     /// <summary>

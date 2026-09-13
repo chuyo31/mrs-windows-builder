@@ -289,43 +289,6 @@
             </Setter>
         </Style>
 
-        <!-- ============ Botón de perfil (RadioButton estilizado) ============ -->
-        <Style x:Key="ProfileButton" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="FontSize" Value="15"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Margin" Value="0,0,0,12"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="bd" Background="{StaticResource FieldBackground}"
-                                BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
-                                CornerRadius="10" Padding="18,18">
-                            <StackPanel>
-                                <TextBlock Text="{TemplateBinding Content}"
-                                           Foreground="{TemplateBinding Foreground}"
-                                           FontSize="{TemplateBinding FontSize}"
-                                           FontWeight="{TemplateBinding FontWeight}"/>
-                                <TextBlock x:Name="tag" Text="Seleccionado"
-                                           Foreground="{StaticResource Accent}" FontSize="11"
-                                           FontWeight="Normal" Margin="0,4,0,0" Visibility="Collapsed"/>
-                            </StackPanel>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentHover}"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
-                                <Setter TargetName="bd" Property="Background" Value="#332E8BFF"/>
-                                <Setter TargetName="tag" Property="Visibility" Value="Visible"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
 
         <!-- ============ Lista de categorías (tema oscuro) ============ -->
         <Style x:Key="DarkListBoxItem" TargetType="ListBoxItem">
@@ -569,17 +532,34 @@
                 </StackPanel>
             </Border>
 
-            <!-- Panel derecho: Perfiles -->
+            <!-- Panel derecho: Perfiles (P11/P12). Los mismos 5 perfiles reales de
+                 profiles/*.json, con el mismo ProfileButton_Click que la pantalla
+                 COMPONENTES (sin duplicar lógica): aquí, sin catálogo todavía, solo
+                 preselecciona el perfil; se aplica de verdad en cuanto el catálogo
+                 exista (ver ShowComponents). -->
             <Border Grid.Column="2" Style="{StaticResource Card}" Margin="10,0,0,0">
                 <StackPanel>
                     <TextBlock Text="Perfiles" Style="{StaticResource CardTitle}"/>
-
-                    <RadioButton x:Name="ProfileNormal" Content="NORMAL" GroupName="Profiles"
-                                 Style="{StaticResource ProfileButton}" Checked="Profile_Checked"/>
-                    <RadioButton x:Name="ProfileLight" Content="LIGHT" GroupName="Profiles"
-                                 Style="{StaticResource ProfileButton}" Checked="Profile_Checked"/>
-                    <RadioButton x:Name="ProfileMedium" Content="MEDIUM" GroupName="Profiles"
-                                 Style="{StaticResource ProfileButton}" Checked="Profile_Checked"/>
+                    <WrapPanel Margin="0,4,0,0">
+                        <Button x:Name="ProfilePreMinimalButton" Content="Mínimo" Tag="minimal"
+                                Style="{StaticResource OutlineButton}" Padding="14,6" Margin="0,0,8,8"
+                                Click="ProfileButton_Click"/>
+                        <Button x:Name="ProfilePreLightButton" Content="Ligero" Tag="light"
+                                Style="{StaticResource OutlineButton}" Padding="14,6" Margin="0,0,8,8"
+                                Click="ProfileButton_Click"/>
+                        <Button x:Name="ProfilePreRecommendedButton" Content="Recomendado" Tag="recommended"
+                                Style="{StaticResource OutlineButton}" Padding="14,6" Margin="0,0,8,8"
+                                Click="ProfileButton_Click"/>
+                        <Button x:Name="ProfilePreCleanButton" Content="Limpio" Tag="clean"
+                                Style="{StaticResource OutlineButton}" Padding="14,6" Margin="0,0,8,8"
+                                Click="ProfileButton_Click"/>
+                        <Button x:Name="ProfilePreCustomButton" Content="Personalizado" Tag="custom"
+                                Style="{StaticResource OutlineButton}" Padding="14,6" Margin="0,0,8,8"
+                                Click="ProfileButton_Click"/>
+                    </WrapPanel>
+                    <TextBlock Text="Se aplica al generar el catálogo de la imagen (pantalla COMPONENTES)."
+                               Foreground="{StaticResource TextSecondary}" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -734,23 +714,23 @@
                     <StackPanel>
                         <TextBlock Text="PERFILES" Foreground="{StaticResource TextSecondary}"
                                    FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <StackPanel Orientation="Horizontal">
+                        <WrapPanel>
                             <Button x:Name="ProfileMinimalButton" Content="Mínimo" Tag="minimal"
-                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,8"
                                     Click="ProfileButton_Click"/>
                             <Button x:Name="ProfileLightButton" Content="Ligero" Tag="light"
-                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,8"
                                     Click="ProfileButton_Click"/>
                             <Button x:Name="ProfileRecommendedButton" Content="Recomendado" Tag="recommended"
-                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,8"
                                     Click="ProfileButton_Click"/>
                             <Button x:Name="ProfileCleanButton" Content="Limpio" Tag="clean"
-                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,8"
                                     Click="ProfileButton_Click"/>
                             <Button x:Name="ProfileCustomButton" Content="Personalizado" Tag="custom"
-                                    Style="{StaticResource OutlineButton}" Padding="16,6"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,8"
                                     Click="ProfileButton_Click"/>
-                        </StackPanel>
+                        </WrapPanel>
                         <TextBlock x:Name="ProfileInfoText" Foreground="{StaticResource TextSecondary}"
                                    FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
                                    Text="Selecciona un perfil o marca componentes manualmente."/>
