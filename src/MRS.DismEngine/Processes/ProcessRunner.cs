@@ -15,7 +15,8 @@ public sealed class ProcessRunner : IProcessRunner
         string fileName,
         string arguments,
         CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        string? workingDirectory = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments)
         {
@@ -26,6 +27,9 @@ public sealed class ProcessRunner : IProcessRunner
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+            startInfo.WorkingDirectory = workingDirectory;
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var stdout = new StringBuilder();

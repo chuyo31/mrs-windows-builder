@@ -1,9 +1,16 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Solo para reutilizar IProcessRunner/IAppLogger (la misma infraestructura de
+         ejecución de procesos y logging que ya usan MRS.DismEngine/MRS.ISOEngine),
+         nunca para acoplarse a WPF, RemovalEngine, ComponentCatalog o ProfileEngine. -->
+    <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" />
+  </ItemGroup>
 
 </Project>

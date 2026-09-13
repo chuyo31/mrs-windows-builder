@@ -43,21 +43,22 @@ varias bibliotecas de motor:
 | `MRS.RemovalEngine` | `net8.0` | Ejecuta el RemovalPlan sobre una copia de trabajo (Export/Mount/DISM/Commit-Discard). |
 | `MRS.ProfileEngine` | `net8.0` | Perfiles de eliminación en JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): producen una selección de ComponentId, nunca ejecutan nada. |
 | `MRS.InstallationOptions` | `net8.0` | Configuración del instalador/OOBE de la ISO final (cuenta local, OOBE sin conexión, bypass de hardware). Independiente del catálogo de componentes. |
-| `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
+| `MRS.PostInstall` | `net8.0` | Empaqueta .NET Desktop Runtime + PCPI y genera `SetupComplete.cmd` (P18). No genera la ISO ni se integra todavía con ISOEngine. |
 
 `MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog`,
-`MRS.RemovalPlanning`, `MRS.RemovalEngine`, `MRS.ProfileEngine` y
-`MRS.InstallationOptions` ya están implementados: análisis, inventario
-real, catálogo, plan de eliminación, ejecución real sobre una copia de
-trabajo (la ISO original nunca se modifica), perfiles predefinidos y
-configuración de instalación/OOBE. `MRS.ISOEngine` aplica ya de verdad
-LabConfig/autounattend.xml sobre una copia de `boot.wim` (P16), pero todavía
-no genera ninguna ISO final (ver P15/P16). `MRS.PostInstall` sigue siendo un
-**stub**.
+`MRS.RemovalPlanning`, `MRS.RemovalEngine`, `MRS.ProfileEngine`,
+`MRS.InstallationOptions` y `MRS.PostInstall` ya están implementados:
+análisis, inventario real, catálogo, plan de eliminación, ejecución real
+sobre una copia de trabajo (la ISO original nunca se modifica), perfiles
+predefinidos, configuración de instalación/OOBE, y empaquetado de PostInstall
+(.NET Desktop Runtime + PCPI vía `SetupComplete.cmd`). `MRS.ISOEngine`
+aplica ya de verdad LabConfig/autounattend.xml sobre una copia de `boot.wim`
+(P16), pero todavía no genera ninguna ISO final ni copia el paquete de P18
+al workspace (ver P15/P16/P18).
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada, PostInstall P18)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -214,6 +215,22 @@ elevación) que el bloqueo del bypass de almacenamiento sigue funcionando.
 Deja documentados los pasos exactos que faltan para completar la
 validación real desde una sesión elevada.
 
+**P18** — `MRS.PostInstall` real: .NET Desktop Runtime 8.0.26 x64 + PCPI
+(ver [`prompts/18-resultado.md`](prompts/18-resultado.md)). `PostInstallPackageBuilder`
+empaqueta ambos instaladores junto a un `SetupComplete.cmd` generado de
+forma determinista, en la estructura `$OEM$\$$\Setup\Scripts\` que Windows
+Setup copia automáticamente a `%WinDir%\Setup\Scripts\` y ejecuta una sola
+vez, en contexto SYSTEM, antes de que exista ninguna sesión de usuario —
+mecanismo elegido explícitamente por no depender de ningún logon/usuario/SID
+(a diferencia de FirstLogonCommands/RunOnce), comparado técnicamente en el
+resultado. .NET se instala en silencio (`/install /quiet /norestart`, éxito
+decidido solo por `ExitCode`) y PCPI solo se lanza si esa instalación
+termina con éxito. Ningún instalador real con el nombre/versión exactos
+pedidos está disponible en este entorno, así que la prueba con archivos
+reales queda pendiente; todo lo demás (empaquetado, orden, determinismo,
+ausencia de rutas del desarrollador) está validado con 44 tests. No genera
+ninguna ISO ni se integra todavía con `MRS.ISOEngine` (solo se deja la API).
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
@@ -221,8 +238,8 @@ validación real desde una sesión elevada.
   sobre un `boot.wim` real de la build objetivo (bloqueado por falta de
   sesión elevada), activar automáticamente el bypass de OOBE sin conexión,
   implementar el bypass de almacenamiento, `/Remove` de features, limpieza
-  de checkpoints/ResetBase, compresión, creación de la ISO final, PCPI ni
-  App Packs.
+  de checkpoints/ResetBase, compresión, creación de la ISO final, copiar el
+  paquete PostInstall de P18 al workspace de generación, ni App Packs.
 
 ---
 
@@ -257,7 +274,7 @@ src/
   MRS.ProfileEngine/      Perfiles JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): solo producen una selección de ComponentId
   MRS.InstallationOptions/ Configuración de instalador/OOBE de la ISO final (cuenta local, OOBE offline, bypass de hardware)
   MRS.ISOEngine/          Workspace de generación, planificador/validación, LabConfigApplier/AutounattendGenerator/BootWimModifier (P16)
-  MRS.PostInstall/        (stub)
+  MRS.PostInstall/        PostInstallPackageBuilder: empaqueta .NET Desktop Runtime + PCPI + SetupComplete.cmd (P18)
 tests/
   MRS.ImageEngine.Tests/          Tests xUnit (parsers, análisis, inventario, workspace)
   MRS.ComponentCatalog.Tests/     Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
@@ -266,6 +283,7 @@ tests/
   MRS.ProfileEngine.Tests/        Tests xUnit (carga de JSON, validación, selección de ComponentId)
   MRS.InstallationOptions.Tests/  Tests xUnit (defaults, independencia de bypasses, serialización)
   MRS.ISOEngine.Tests/            Tests xUnit (planificador, validación, LabConfig/autounattend/boot.wim con DISM/registro simulados)
+  MRS.PostInstall.Tests/          Tests xUnit (configuración, empaquetado, ejecución de comandos, orden .NET->PCPI, seguridad)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
 profiles/                 Perfiles de eliminación en JSON (minimal/light/recommended/clean/custom)
@@ -293,4 +311,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P15** – `MRS.InstallationOptions` (cuenta local/OOBE sin conexión/bypass de TPM-SecureBoot-CPU-RAM-almacenamiento) + preparación de `MRS.ISOEngine` (workspace de generación, planificador, validación). Investigación de mecanismos documentada; sin ejecución real sobre `boot.wim` todavía (ver `prompts/15-resultado.md`).
 - [x] **P16** – implementación real de P15 sobre una copia de `boot.wim`: `LabConfigApplier`, `AutounattendGenerator`, `BootWimModifier`/`InstallationImageService` (ciclo Mount→hive→aplicar→verificar→Commit/Discard). Bypass de almacenamiento sigue sin implementar; OOBE sin conexión implementado pero no confirmado en la build real (sin sesión elevada disponible). Ver `prompts/16-resultado.md`.
 - [ ] **P17** – intento de validación real de P16 sobre una ISO real: bloqueado por completo (DISM exige elevación incluso para consultas de solo lectura; esta sesión no está elevada). Sin cambios de código; documentado con transparencia junto con los pasos exactos que faltan para completarla. Ver `prompts/17-resultado.md`.
-- [ ] **P18** – `MRS.PostInstall`: tweaks/post-instalación, confirmación real de P16/P17 sobre la ISO objetivo (con sesión elevada), y regeneración de la ISO final (`oscdimg`).
+- [x] **P18** – `MRS.PostInstall`: `PostInstallPackageBuilder` empaqueta .NET Desktop Runtime 8.0.26 x64 + PCPI junto a un `SetupComplete.cmd` determinista (`$OEM$\$$\Setup\Scripts\`, contexto SYSTEM, una sola ejecución). Sin archivos reales exactos disponibles para probar; sin integración con ISOEngine todavía (solo la API). Ver `prompts/18-resultado.md`.
+- [ ] **P19** – confirmación real de P16/P17 sobre la ISO objetivo (con sesión elevada), integrar el paquete de P18 en el workspace de ISOEngine, y regeneración de la ISO final (`oscdimg`).

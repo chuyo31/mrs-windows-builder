@@ -21,7 +21,7 @@ public sealed class OfflineRegistryEditorTests
     {
         await _editor.LoadHiveAsync("MRS_TEST", @"C:\mount\Windows\System32\config\SYSTEM");
 
-        var (fileName, arguments) = _process.Calls.Single();
+        var (fileName, arguments, _) = _process.Calls.Single();
         Assert.Equal("reg.exe", fileName);
         Assert.Equal(@"load HKLM\MRS_TEST ""C:\mount\Windows\System32\config\SYSTEM""", arguments);
     }
@@ -31,7 +31,7 @@ public sealed class OfflineRegistryEditorTests
     {
         await _editor.SetDwordAsync("MRS_TEST", "Setup\\LabConfig", "BypassTPMCheck", 1);
 
-        var (_, arguments) = _process.Calls.Single();
+        var (_, arguments, _) = _process.Calls.Single();
         Assert.Equal(@"add ""HKLM\MRS_TEST\Setup\LabConfig"" /v BypassTPMCheck /t REG_DWORD /d 1 /f", arguments);
     }
 
@@ -40,7 +40,7 @@ public sealed class OfflineRegistryEditorTests
     {
         await _editor.DeleteValueAsync("MRS_TEST", "Setup\\LabConfig", "BypassTPMCheck");
 
-        var (_, arguments) = _process.Calls.Single();
+        var (_, arguments, _) = _process.Calls.Single();
         Assert.Equal(@"delete ""HKLM\MRS_TEST\Setup\LabConfig"" /v BypassTPMCheck /f", arguments);
     }
 
@@ -49,7 +49,7 @@ public sealed class OfflineRegistryEditorTests
     {
         await _editor.QueryValueAsync("MRS_TEST", "Setup\\LabConfig", "BypassTPMCheck");
 
-        var (_, arguments) = _process.Calls.Single();
+        var (_, arguments, _) = _process.Calls.Single();
         Assert.Equal(@"query ""HKLM\MRS_TEST\Setup\LabConfig"" /v BypassTPMCheck", arguments);
     }
 
@@ -58,7 +58,7 @@ public sealed class OfflineRegistryEditorTests
     {
         await _editor.UnloadHiveAsync("MRS_TEST");
 
-        var (_, arguments) = _process.Calls.Single();
+        var (_, arguments, _) = _process.Calls.Single();
         Assert.Equal(@"unload HKLM\MRS_TEST", arguments);
     }
 

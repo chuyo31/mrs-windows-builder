@@ -6,11 +6,11 @@ namespace MRS.ISOEngine.Tests.Fakes;
 internal sealed class FakeProcessRunner : IProcessRunner
 {
     public int ExitCode { get; set; }
-    public List<(string FileName, string Arguments)> Calls { get; } = new();
+    public List<(string FileName, string Arguments, string? WorkingDirectory)> Calls { get; } = new();
 
-    public Task<ProcessRunResult> RunAsync(string fileName, string arguments, CancellationToken cancellationToken = default, TimeSpan? timeout = null)
+    public Task<ProcessRunResult> RunAsync(string fileName, string arguments, CancellationToken cancellationToken = default, TimeSpan? timeout = null, string? workingDirectory = null)
     {
-        Calls.Add((fileName, arguments));
+        Calls.Add((fileName, arguments, workingDirectory));
         return Task.FromResult(new ProcessRunResult(fileName, arguments, ExitCode, string.Empty, string.Empty, TimeSpan.FromMilliseconds(1), false));
     }
 }
