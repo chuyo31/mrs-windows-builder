@@ -415,6 +415,12 @@ public partial class MainWindow : Window
 
     private void ShowComponents(ComponentCatalogResult catalog)
     {
+        // Si se preseleccionó un perfil en la pantalla inicial, conservar su
+        // SecurityOptions tal cual (P14): no se reinicia solo por cambiar de
+        // pantalla. Debe leerse ANTES de reiniciar _currentSecurityOptions más abajo.
+        var preSelectedProfileId = _activeCatalogProfileId;
+        var preSelectedSecurityOptions = _currentSecurityOptions;
+
         _currentSecurityOptions = CatalogSecurityOptions.Safe;
         PopulateComponentRows(catalog);
 
@@ -431,14 +437,15 @@ public partial class MainWindow : Window
         ClearComponentDetail();
         UpdateSelectionSummary();
 
-        // Si se preseleccionó un perfil en la pantalla inicial (o quedó activo de un
-        // catálogo anterior), aplicarlo ahora de verdad: ya existen ComponentId reales
-        // contra los que filtrar/proteger. Reutiliza exactamente la misma lógica
-        // (ApplyProfile), sin duplicarla.
-        var preSelectedProfileId = _activeCatalogProfileId;
+        // Aplicarlo ahora de verdad: ya existen ComponentId reales contra los que
+        // filtrar/proteger. Reutiliza exactamente la misma lógica (ApplyProfile),
+        // sin duplicarla.
         ResetProfileBar();
         if (preSelectedProfileId is not null)
-            ApplyProfile(preSelectedProfileId);
+        {
+            _currentSecurityOptions = preSelectedSecurityOptions;
+            ApplyProfile(preSelectedProfileId, preserveCurrentSecurityOptions: true);
+        }
 
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Visible;
@@ -505,6 +512,7 @@ public partial class MainWindow : Window
         _currentSecurityOptions = CatalogSecurityOptions.Safe;
         ProfileInfoText.Text = "Selecciona un perfil o marca componentes manualmente.";
         SecurityOptionsPanel.Visibility = Visibility.Collapsed;
+        PreSecurityOptionsPanel.Visibility = Visibility.Collapsed;
 
         foreach (var btn in ProfileButtons)
             btn.Style = (Style)FindResource("OutlineButton");
@@ -610,7 +618,13 @@ public partial class MainWindow : Window
     /// vuelve a invocar automáticamente en cuanto <see cref="ShowComponents"/> genera el
     /// catálogo real.
     /// </summary>
-    private void ApplyProfile(string profileId)
+    /// <param name="preserveCurrentSecurityOptions">
+    /// P14: si es <c>true</c>, no recalcula <see cref="_currentSecurityOptions"/> a partir del
+    /// perfil (salvo que esté bloqueado) — se usa al reaplicar la preselección de la
+    /// pantalla inicial tras generar el catálogo, para conservar exactamente lo que el
+    /// usuario ya había elegido allí.
+    /// </param>
+    private void ApplyProfile(string profileId, bool preserveCurrentSecurityOptions = false)
     {
         HighlightActiveProfileButton(profileId);
 
@@ -625,12 +639,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        var previousProfile = _activeCatalogProfileId is null
+            ? null
+            : _profileService.GetProfile(_profileLoadResult, _activeCatalogProfileId);
+
         _activeCatalogProfileId = profile.Id;
 
-        // P13: Mínimo/Ligero/Recomendado siempre fuerzan Defender/Windows Update
-        // protegidos (EffectiveSecurityOptions); Limpio/Personalizado parten de la
-        // configuración del propio perfil (JSON) y se pueden cambiar con las casillas.
-        _currentSecurityOptions = ToCatalogSecurityOptions(profile.EffectiveSecurityOptions);
+        // P13/P14: Mínimo/Ligero/Recomendado siempre fuerzan Defender/Windows Update
+        // protegidos (EffectiveSecurityOptions) -- "los perfiles seguros siempre
+        // parten de valores seguros", sin heredar nunca una configuración insegura.
+        // Limpio/Personalizado parten de los valores por defecto del propio perfil
+        // SOLO al entrar desde un perfil bloqueado (o sin perfil previo); entre
+        // Limpio <-> Personalizado, o al reaplicar la preselección de la pantalla
+        // inicial, se conserva la configuración ya elegida.
+        if (profile.IsSecurityLocked)
+            _currentSecurityOptions = ToCatalogSecurityOptions(profile.EffectiveSecurityOptions);
+        else if (!preserveCurrentSecurityOptions && (previousProfile is null || previousProfile.IsSecurityLocked))
+            _currentSecurityOptions = ToCatalogSecurityOptions(profile.EffectiveSecurityOptions);
+
         UpdateSecurityOptionsPanel(profile);
         RebuildCatalogWithCurrentSecurityOptions();
 
@@ -690,69 +716,113 @@ public partial class MainWindow : Window
         => new() { KeepDefender = options.KeepDefender, KeepWindowsUpdate = options.KeepWindowsUpdate };
 
     /// <summary>
-    /// Muestra el panel de seguridad que corresponde a <paramref name="profile"/> (P13):
-    /// solo información para Mínimo/Ligero/Recomendado (<see cref="ProfileDefinition.IsSecurityLocked"/>),
-    /// casillas modificables para Limpio/Personalizado.
+    /// Muestra el panel de seguridad que corresponde a <paramref name="profile"/>
+    /// (P13/P14) en ambas pantallas (inicial y COMPONENTES): solo información para
+    /// Mínimo/Ligero/Recomendado (<see cref="ProfileDefinition.IsSecurityLocked"/>,
+    /// solo en COMPONENTES), casillas modificables para Limpio/Personalizado en las
+    /// dos. <see cref="_currentSecurityOptions"/> es la única fuente de verdad: este
+    /// método solo la refleja visualmente, nunca la decide.
     /// </summary>
     private void UpdateSecurityOptionsPanel(ProfileDefinition profile)
     {
+        // Pantalla COMPONENTES: badges de "protegido" para los perfiles bloqueados.
         SecurityOptionsPanel.Visibility = Visibility.Visible;
+        SecurityLockedPanel.Visibility = profile.IsSecurityLocked ? Visibility.Visible : Visibility.Collapsed;
+        SecurityConfigurablePanel.Visibility = profile.IsSecurityLocked ? Visibility.Collapsed : Visibility.Visible;
+
+        // Pantalla inicial: sin badges (mockup de P14), solo aparece para Limpio/Personalizado.
+        PreSecurityOptionsPanel.Visibility = profile.IsSecurityLocked ? Visibility.Collapsed : Visibility.Visible;
 
         if (profile.IsSecurityLocked)
-        {
-            SecurityLockedPanel.Visibility = Visibility.Visible;
-            SecurityConfigurablePanel.Visibility = Visibility.Collapsed;
             return;
-        }
 
-        SecurityLockedPanel.Visibility = Visibility.Collapsed;
-        SecurityConfigurablePanel.Visibility = Visibility.Visible;
-
-        // Refleja _currentSecurityOptions en las casillas sin disparar
-        // SecurityOption_Changed (evitaría una reconstrucción redundante del catálogo:
-        // RebuildCatalogWithCurrentSecurityOptions ya se llamó justo antes en ApplyProfile).
-        KeepDefenderCheckBox.Checked -= SecurityOption_Changed;
-        KeepDefenderCheckBox.Unchecked -= SecurityOption_Changed;
-        KeepWindowsUpdateCheckBox.Checked -= SecurityOption_Changed;
-        KeepWindowsUpdateCheckBox.Unchecked -= SecurityOption_Changed;
-
-        KeepDefenderCheckBox.IsChecked = _currentSecurityOptions.KeepDefender;
-        KeepWindowsUpdateCheckBox.IsChecked = _currentSecurityOptions.KeepWindowsUpdate;
-        DefenderWarningText.Visibility = _currentSecurityOptions.KeepDefender ? Visibility.Collapsed : Visibility.Visible;
-        WindowsUpdateWarningText.Visibility = _currentSecurityOptions.KeepWindowsUpdate ? Visibility.Collapsed : Visibility.Visible;
-
-        KeepDefenderCheckBox.Checked += SecurityOption_Changed;
-        KeepDefenderCheckBox.Unchecked += SecurityOption_Changed;
-        KeepWindowsUpdateCheckBox.Checked += SecurityOption_Changed;
-        KeepWindowsUpdateCheckBox.Unchecked += SecurityOption_Changed;
+        SetSecurityCheckboxesWithoutTriggeringChange();
     }
 
     /// <summary>
-    /// P13: el usuario cambia si Limpio/Personalizado mantienen Defender/Windows
-    /// Update. Nunca ejecuta ninguna acción sobre Windows ni sobre la imagen: solo
-    /// cambia <see cref="_currentSecurityOptions"/> y reconstruye el catálogo en
-    /// memoria (protección), para que el plan refleje el cambio.
+    /// Refleja <see cref="_currentSecurityOptions"/> en las 4 casillas (2 por pantalla)
+    /// sin disparar <see cref="SecurityOption_Changed"/> — evitaría una reconstrucción
+    /// redundante del catálogo justo después de haberla hecho ya.
+    /// </summary>
+    private void SetSecurityCheckboxesWithoutTriggeringChange()
+    {
+        foreach (var checkBox in DefenderCheckBoxes)
+        {
+            checkBox.Checked -= SecurityOption_Changed;
+            checkBox.Unchecked -= SecurityOption_Changed;
+            checkBox.IsChecked = _currentSecurityOptions.KeepDefender;
+            checkBox.Checked += SecurityOption_Changed;
+            checkBox.Unchecked += SecurityOption_Changed;
+        }
+
+        foreach (var checkBox in WindowsUpdateCheckBoxes)
+        {
+            checkBox.Checked -= SecurityOption_Changed;
+            checkBox.Unchecked -= SecurityOption_Changed;
+            checkBox.IsChecked = _currentSecurityOptions.KeepWindowsUpdate;
+            checkBox.Checked += SecurityOption_Changed;
+            checkBox.Unchecked += SecurityOption_Changed;
+        }
+
+        foreach (var warning in DefenderWarningTexts)
+            warning.Visibility = _currentSecurityOptions.KeepDefender ? Visibility.Collapsed : Visibility.Visible;
+
+        foreach (var warning in WindowsUpdateWarningTexts)
+            warning.Visibility = _currentSecurityOptions.KeepWindowsUpdate ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private IEnumerable<CheckBox> DefenderCheckBoxes => new[] { KeepDefenderCheckBox, PreKeepDefenderCheckBox };
+    private IEnumerable<CheckBox> WindowsUpdateCheckBoxes => new[] { KeepWindowsUpdateCheckBox, PreKeepWindowsUpdateCheckBox };
+    private IEnumerable<TextBlock> DefenderWarningTexts => new[] { DefenderWarningText, PreDefenderWarningText };
+    private IEnumerable<TextBlock> WindowsUpdateWarningTexts => new[] { WindowsUpdateWarningText, PreWindowsUpdateWarningText };
+
+    /// <summary>
+    /// P13/P14: el usuario cambia si Limpio/Personalizado mantienen Defender/Windows
+    /// Update, desde cualquiera de las dos pantallas (inicial o COMPONENTES) que
+    /// comparten <see cref="_currentSecurityOptions"/> como única fuente de verdad.
+    /// Nunca ejecuta ninguna acción sobre Windows ni sobre la imagen: solo cambia el
+    /// estado en memoria y reconstruye el catálogo (protección) para que el plan lo
+    /// refleje. Solo registra en el log y reconstruye si el valor realmente cambió
+    /// (nunca por sincronizar la otra pantalla ni por un render).
     /// </summary>
     private void SecurityOption_Changed(object sender, RoutedEventArgs e)
     {
-        if (_activeCatalogProfileId is null || _profileLoadResult is null)
+        if (_activeCatalogProfileId is null || _profileLoadResult is null || sender is not CheckBox checkBox)
             return;
 
         var profile = _profileService.GetProfile(_profileLoadResult, _activeCatalogProfileId);
         if (profile is null || profile.IsSecurityLocked)
             return; // defensa en profundidad: estas casillas no deberían ni mostrarse aquí.
 
-        _currentSecurityOptions = new CatalogSecurityOptions
+        var isChecked = checkBox.IsChecked == true;
+        var previous = _currentSecurityOptions;
+        CatalogSecurityOptions updated;
+        bool isDefender;
+
+        if (checkBox == KeepDefenderCheckBox || checkBox == PreKeepDefenderCheckBox)
         {
-            KeepDefender = KeepDefenderCheckBox.IsChecked == true,
-            KeepWindowsUpdate = KeepWindowsUpdateCheckBox.IsChecked == true,
-        };
+            updated = previous with { KeepDefender = isChecked };
+            isDefender = true;
+        }
+        else if (checkBox == KeepWindowsUpdateCheckBox || checkBox == PreKeepWindowsUpdateCheckBox)
+        {
+            updated = previous with { KeepWindowsUpdate = isChecked };
+            isDefender = false;
+        }
+        else
+        {
+            return;
+        }
 
-        DefenderWarningText.Visibility = _currentSecurityOptions.KeepDefender ? Visibility.Collapsed : Visibility.Visible;
-        WindowsUpdateWarningText.Visibility = _currentSecurityOptions.KeepWindowsUpdate ? Visibility.Collapsed : Visibility.Visible;
+        if (updated == previous)
+            return; // sin cambio real (p. ej. sincronización desde SetSecurityCheckboxesWithoutTriggeringChange).
 
-        _logger.Info($"[PROFILES] Opciones de seguridad de '{profile.Id}' actualizadas: " +
-                     $"KeepDefender={_currentSecurityOptions.KeepDefender}, KeepWindowsUpdate={_currentSecurityOptions.KeepWindowsUpdate}.");
+        _currentSecurityOptions = updated;
+        SetSecurityCheckboxesWithoutTriggeringChange(); // mantiene sincronizadas ambas pantallas
+
+        _logger.Info(isDefender
+            ? $"[SECURITY] Mantener Microsoft Defender: {(updated.KeepDefender ? "true" : "false")}"
+            : $"[SECURITY] Mantener Windows Update: {(updated.KeepWindowsUpdate ? "true" : "false")}");
 
         RebuildCatalogWithCurrentSecurityOptions();
     }

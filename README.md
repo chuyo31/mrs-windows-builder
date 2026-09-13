@@ -53,7 +53,7 @@ modifica) y perfiles predefinidos. El resto de bibliotecas siguen siendo
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12, telemetría P10, perfiles P11/P13)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -152,6 +152,19 @@ el `RemovalPlan` refleja el cambio de protección — pero "ya no protegido"
 no equivale a "se elimina": la implementación real de desactivación queda
 para una fase posterior e independiente.
 
+**P14** — corrección: "OPCIONES AVANZADAS" solo aparecía en COMPONENTES; al
+elegir Limpio/Personalizado en la pantalla inicial no pasaba nada visible
+hasta llegar a COMPONENTES. Ahora el mismo panel (mismas casillas,
+`_currentSecurityOptions` como única fuente de verdad) aparece también en
+la pantalla inicial en cuanto se elige Limpio o Personalizado, y desaparece
+al volver a Mínimo/Ligero/Recomendado. La configuración elegida antes de
+pulsar "Continuar" se conserva al llegar a COMPONENTES (nunca se reinicia a
+los valores por defecto solo por cambiar de pantalla); cambiar a un perfil
+seguro sí restaura siempre la protección, y entrar en Limpio/Personalizado
+desde un perfil seguro parte de valores seguros por defecto — nunca se
+hereda una configuración insegura entre pantallas ni entre perfiles (ver
+[`prompts/14-resultado.md`](prompts/14-resultado.md)).
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
@@ -221,4 +234,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P11** – `MRS.ProfileEngine`: perfiles Mínimo/Ligero/Recomendado/Limpio/Personalizado definidos en JSON; solo producen una selección de ComponentId, la protección real sigue en ProtectionEngine/RemovalPlanning. Perfiles predefinidos pendientes de ComponentId reales (requieren un inventario de referencia; ver `prompts/11-resultado.md`).
 - [x] **P12** – corrección: sustituidos los botones de perfil legados (NORMAL/LIGHT/MEDIUM, anteriores a P11) por los 5 perfiles reales, reutilizando la misma lógica en la pantalla inicial (preselección) y en COMPONENTES.
 - [x] **P13** – opciones de seguridad por perfil (`SecurityOptions`: mantener Defender/Windows Update). Mínimo/Ligero/Recomendado los protegen siempre; Limpio/Personalizado permiten decidirlo desde "OPCIONES AVANZADAS". Solo configuración/planificación — sin ejecutar ninguna desactivación real (ver `prompts/13-resultado.md`).
-- [ ] **P14** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.
+- [x] **P14** – corrección: "OPCIONES AVANZADAS" ahora también aparece en la pantalla inicial al elegir Limpio/Personalizado (antes solo vivía en COMPONENTES); una única fuente de verdad (`_currentSecurityOptions`) sincroniza ambas pantallas, y la configuración se conserva al pulsar "Continuar" (ver `prompts/14-resultado.md`).
+- [ ] **P15** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.

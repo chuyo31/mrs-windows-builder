@@ -560,6 +560,35 @@
                     <TextBlock Text="Se aplica al generar el catálogo de la imagen (pantalla COMPONENTES)."
                                Foreground="{StaticResource TextSecondary}" FontSize="11"
                                TextWrapping="Wrap" Margin="0,4,0,0"/>
+
+                    <!-- Seguridad (P14): mismo estado que el panel de COMPONENTES (_currentSecurityOptions
+                         es la única fuente de verdad); aquí solo se muestra para Limpio/Personalizado,
+                         igual que allí. Mínimo/Ligero/Recomendado no muestran nada (permanecen protegidos). -->
+                    <Border x:Name="PreSecurityOptionsPanel" Margin="0,10,0,0" Padding="12,10"
+                            CornerRadius="8" Background="{StaticResource FieldBackground}"
+                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                            Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="OPCIONES AVANZADAS" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+
+                            <CheckBox x:Name="PreKeepDefenderCheckBox" Content="Mantener Microsoft Defender"
+                                      Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                      IsChecked="True" Margin="0,0,0,4"
+                                      Checked="SecurityOption_Changed" Unchecked="SecurityOption_Changed"/>
+                            <TextBlock x:Name="PreDefenderWarningText" Foreground="#FFE5484D" FontSize="11"
+                                       TextWrapping="Wrap" Margin="20,0,0,8" Visibility="Collapsed"
+                                       Text="⚠ Microsoft Defender se desactivará al generar la imagen."/>
+
+                            <CheckBox x:Name="PreKeepWindowsUpdateCheckBox" Content="Mantener Windows Update"
+                                      Foreground="{StaticResource TextPrimary}" FontSize="12"
+                                      IsChecked="True" Margin="0,0,0,4"
+                                      Checked="SecurityOption_Changed" Unchecked="SecurityOption_Changed"/>
+                            <TextBlock x:Name="PreWindowsUpdateWarningText" Foreground="#FFE5484D" FontSize="11"
+                                       TextWrapping="Wrap" Margin="20,0,0,0" Visibility="Collapsed"
+                                       Text="⚠ Windows Update se desactivará al generar la imagen."/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
         </Grid>
@@ -779,7 +808,7 @@
                                               Checked="SecurityOption_Changed" Unchecked="SecurityOption_Changed"/>
                                     <TextBlock x:Name="DefenderWarningText" Foreground="#FFE5484D" FontSize="11"
                                                TextWrapping="Wrap" Margin="20,0,0,8" Visibility="Collapsed"
-                                               Text="Microsoft Defender quedará desactivado en la configuración del perfil."/>
+                                               Text="⚠ Microsoft Defender se desactivará al generar la imagen."/>
 
                                     <CheckBox x:Name="KeepWindowsUpdateCheckBox" Content="Mantener Windows Update"
                                               Foreground="{StaticResource TextPrimary}" FontSize="12"
@@ -787,7 +816,7 @@
                                               Checked="SecurityOption_Changed" Unchecked="SecurityOption_Changed"/>
                                     <TextBlock x:Name="WindowsUpdateWarningText" Foreground="#FFE5484D" FontSize="11"
                                                TextWrapping="Wrap" Margin="20,0,0,0" Visibility="Collapsed"
-                                               Text="Windows Update quedará desactivado en la configuración del perfil."/>
+                                               Text="⚠ Windows Update se desactivará al generar la imagen."/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
