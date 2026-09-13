@@ -35,7 +35,7 @@ varias bibliotecas de motor:
 | Proyecto | Framework | Rol |
 |---|---|---|
 | `MRS.WindowsBuilder` | `net8.0-windows` (WPF) | Aplicación de escritorio y UI. |
-| `MRS.ISOEngine` | `net8.0` | Workspace de generación, planificación de opciones de instalación y validación previa a generar la ISO. Todavía no monta ni regenera ninguna ISO real. |
+| `MRS.ISOEngine` | `net8.0` | Workspace de generación, planificación/validación, y aplicación real de LabConfig/autounattend.xml sobre una copia de `boot.wim` (P16). Todavía no genera la ISO final (`oscdimg`). |
 | `MRS.ImageEngine` | `net8.0` | Lectura de metadatos de la imagen (WIM/ESD), ediciones. |
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
@@ -50,13 +50,14 @@ varias bibliotecas de motor:
 `MRS.InstallationOptions` ya están implementados: análisis, inventario
 real, catálogo, plan de eliminación, ejecución real sobre una copia de
 trabajo (la ISO original nunca se modifica), perfiles predefinidos y
-configuración de instalación/OOBE. `MRS.ISOEngine` tiene ya su modelo de
-workspace/planificación/validación, pero todavía no genera ninguna ISO real
-(ver P15). `MRS.PostInstall` sigue siendo un **stub**.
+configuración de instalación/OOBE. `MRS.ISOEngine` aplica ya de verdad
+LabConfig/autounattend.xml sobre una copia de `boot.wim` (P16), pero todavía
+no genera ninguna ISO final (ver P15/P16). `MRS.PostInstall` sigue siendo un
+**stub**.
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -184,13 +185,30 @@ confirmación empírica (OOBE sin conexión, bypass de almacenamiento). El
 bypass de RAM nunca se presenta como "Windows 11 funcionando bien con 2 GB":
 solo evita el bloqueo del instalador.
 
+**P16** — implementación real de P15 sobre una **copia** de `boot.wim` (ver
+[`prompts/16-resultado.md`](prompts/16-resultado.md)): `OfflineRegistryEditor`
+(hive `SYSTEM` offline vía `reg.exe`), `LabConfigApplier` (aplica/retira los
+4 bypasses de compatibilidad de forma idempotente), `AutounattendGenerator`
+(XML determinista, sin credenciales hardcoded) y `BootWimModifier`/
+`InstallationImageService` (ciclo Mount→hive→aplicar→verificar→Commit/Discard,
+mismo patrón transaccional que `RemovalEngine`, nunca sobre la ISO original).
+El bypass de almacenamiento sigue **sin implementar** (la UI lo deshabilita
+explícitamente) y OOBE sin conexión (`BypassNRO`) está **implementado pero
+no activado automáticamente**: esta sesión no pudo confirmarlo en la build
+26300.9278 real por falta de privilegios elevados (DISM los exige). Validado
+con 71 tests (DISM/registro simulados, nunca por texto de salida); la prueba
+real sobre un `boot.wim` de la ISO objetivo queda pendiente y documentada
+como tal, sin resultados inventados.
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
-  solo configuración + planificación + UI + protección), aplicar de verdad
-  ninguna opción de instalación de P15 sobre un `boot.wim` real, `/Remove`
-  de features, limpieza de checkpoints/ResetBase, compresión, creación de
-  la ISO final, PCPI ni App Packs.
+  solo configuración + planificación + UI + protección), confirmar P16
+  sobre un `boot.wim` real de la build objetivo (bloqueado por falta de
+  sesión elevada), activar automáticamente el bypass de OOBE sin conexión,
+  implementar el bypass de almacenamiento, `/Remove` de features, limpieza
+  de checkpoints/ResetBase, compresión, creación de la ISO final, PCPI ni
+  App Packs.
 
 ---
 
@@ -224,7 +242,7 @@ src/
   MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard), telemetría ProgressInfo
   MRS.ProfileEngine/      Perfiles JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): solo producen una selección de ComponentId
   MRS.InstallationOptions/ Configuración de instalador/OOBE de la ISO final (cuenta local, OOBE offline, bypass de hardware)
-  MRS.ISOEngine/          Workspace de generación, planificador de opciones de instalación, validación previa a generar la ISO
+  MRS.ISOEngine/          Workspace de generación, planificador/validación, LabConfigApplier/AutounattendGenerator/BootWimModifier (P16)
   MRS.PostInstall/        (stub)
 tests/
   MRS.ImageEngine.Tests/          Tests xUnit (parsers, análisis, inventario, workspace)
@@ -233,7 +251,7 @@ tests/
   MRS.RemovalEngine.Tests/        Tests xUnit (ejecución transaccional, workspace, telemetría de progreso)
   MRS.ProfileEngine.Tests/        Tests xUnit (carga de JSON, validación, selección de ComponentId)
   MRS.InstallationOptions.Tests/  Tests xUnit (defaults, independencia de bypasses, serialización)
-  MRS.ISOEngine.Tests/            Tests xUnit (planificador de instalación, validación de workspace)
+  MRS.ISOEngine.Tests/            Tests xUnit (planificador, validación, LabConfig/autounattend/boot.wim con DISM/registro simulados)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
 profiles/                 Perfiles de eliminación en JSON (minimal/light/recommended/clean/custom)
@@ -259,4 +277,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P13** – opciones de seguridad por perfil (`SecurityOptions`: mantener Defender/Windows Update). Mínimo/Ligero/Recomendado los protegen siempre; Limpio/Personalizado permiten decidirlo desde "OPCIONES AVANZADAS". Solo configuración/planificación — sin ejecutar ninguna desactivación real (ver `prompts/13-resultado.md`).
 - [x] **P14** – corrección: "OPCIONES AVANZADAS" ahora también aparece en la pantalla inicial al elegir Limpio/Personalizado (antes solo vivía en COMPONENTES); una única fuente de verdad (`_currentSecurityOptions`) sincroniza ambas pantallas, y la configuración se conserva al pulsar "Continuar" (ver `prompts/14-resultado.md`).
 - [x] **P15** – `MRS.InstallationOptions` (cuenta local/OOBE sin conexión/bypass de TPM-SecureBoot-CPU-RAM-almacenamiento) + preparación de `MRS.ISOEngine` (workspace de generación, planificador, validación). Investigación de mecanismos documentada; sin ejecución real sobre `boot.wim` todavía (ver `prompts/15-resultado.md`).
-- [ ] **P16** – `MRS.PostInstall`: tweaks/post-instalación, aplicación real de P15 sobre `boot.wim`, y regeneración de la ISO final (`oscdimg`).
+- [x] **P16** – implementación real de P15 sobre una copia de `boot.wim`: `LabConfigApplier`, `AutounattendGenerator`, `BootWimModifier`/`InstallationImageService` (ciclo Mount→hive→aplicar→verificar→Commit/Discard). Bypass de almacenamiento sigue sin implementar; OOBE sin conexión implementado pero no confirmado en la build real (sin sesión elevada disponible). Ver `prompts/16-resultado.md`.
+- [ ] **P17** – `MRS.PostInstall`: tweaks/post-instalación, confirmación real de P16 sobre la ISO objetivo (con sesión elevada), y regeneración de la ISO final (`oscdimg`).

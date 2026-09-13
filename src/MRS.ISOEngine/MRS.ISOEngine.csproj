@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MRS.InstallationOptions\MRS.InstallationOptions.csproj" />
+    <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" />
+    <ProjectReference Include="..\MRS.ImageEngine\MRS.ImageEngine.csproj" />
   </ItemGroup>
 
 </Project>

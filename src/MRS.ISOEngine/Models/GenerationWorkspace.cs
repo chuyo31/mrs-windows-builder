@@ -26,4 +26,15 @@ public sealed record GenerationWorkspace
 
     /// <summary>Arquitectura esperada (p. ej. <c>"amd64"</c>).</summary>
     public string Architecture { get; init; } = "amd64";
+
+    /// <summary>
+    /// Directorio donde se monta temporalmente un WIM del workspace (P16) — nunca
+    /// una unidad fija, igual que <c>InventoryWorkspace.MountPath</c>.
+    /// </summary>
+    public string MountPath { get; init; } = string.Empty;
+
+    /// <summary>Identificador del workspace para logging estructurado (P09/P16), derivado de <see cref="WorkspacePath"/>.</summary>
+    public string WorkspaceId => WorkspacePath.Length == 0
+        ? string.Empty
+        : Path.GetFileName(Path.TrimEndingDirectorySeparator(WorkspacePath));
 }

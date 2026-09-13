@@ -1017,10 +1017,15 @@
                                           Foreground="{StaticResource TextPrimary}" FontSize="12"
                                           IsChecked="True" Margin="0,0,0,6"
                                           Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                <!-- P16, sección 9/15: sin mecanismo fiable implementado. Deshabilitada a
+                                     propósito (nunca marcada) para no aparentar que está operativa; si
+                                     InstallationOptions.BypassStorage llegase a ser true por cualquier otra
+                                     vía, InstallationExecutionValidator bloquea la ejecución igualmente. -->
                                 <CheckBox x:Name="BypassStorageCheckBox" Content="Omitir requisito de almacenamiento"
-                                          Foreground="{StaticResource TextPrimary}" FontSize="12"
-                                          IsChecked="True" Margin="0,0,0,6"
-                                          Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+                                          Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                          IsChecked="False" IsEnabled="False" Margin="0,0,0,2"/>
+                                <TextBlock Text="⚠ No implementado/validado para esta build"
+                                           Foreground="#FFE5484D" FontSize="11" Margin="20,0,0,6"/>
 
                                 <TextBlock Text="Estas opciones permiten utilizar la ISO en equipos que no cumplen los requisitos oficiales de Windows 11."
                                            Foreground="{StaticResource TextSecondary}" FontSize="11"

@@ -43,9 +43,13 @@ public static class InstallationConfigurationPlanner
                 Description = "Offline OOBE enabled",
                 Mechanism = "Valor DWORD BypassNRO=1 en HKLM\\SYSTEM\\Setup\\OOBE del registro " +
                              "offline de boot.wim (el mismo mecanismo que %WinDir%\\System32\\Oobe\\" +
-                             "BypassNRO.cmd aplica en caliente). Requiere confirmar su vigencia en " +
-                             "26H2 build 26300.9278 antes de depender de él (ver prompts/15-resultado.md).",
+                             "BypassNRO.cmd aplica en caliente). El mecanismo está implementado " +
+                             "(LabConfigApplier.ApplyOfflineOobeBypassAsync) pero P16 no confirmó su " +
+                             "fiabilidad en 26H2 build 26300.9278 dentro de esta sesión (sin elevación " +
+                             "disponible para probarlo) — no se aplica todavía automáticamente. Ver " +
+                             "prompts/16-resultado.md.",
                 TargetArtifact = "boot.wim (hive offline SYSTEM: Setup\\OOBE\\BypassNRO)",
+                Status = InstallationActionStatus.PendingReliableMechanism,
             });
 
         if (options.BypassTpm)
@@ -76,8 +80,10 @@ public static class InstallationConfigurationPlanner
                 Description = "Storage bypass enabled",
                 Mechanism = "Sin una clave LabConfig oficial equivalente confirmada para el " +
                              "requisito de almacenamiento (a diferencia de TPM/Secure Boot/CPU/RAM). " +
-                             "Documentado como MENOS FIABLE en 26H2; ver limitaciones en prompts/15-resultado.md.",
+                             "No implementado: P16 bloquea la ejecución si esta opción está activada " +
+                             "(ver InstallationExecutionValidator y prompts/16-resultado.md).",
                 TargetArtifact = "boot.wim (hive offline SYSTEM: Setup\\LabConfig, sin confirmar)",
+                Status = InstallationActionStatus.NotImplemented,
             });
 
         return actions;

@@ -95,7 +95,11 @@ public partial class MainWindow : Window
     private ProfileLoadResult? _profileLoadResult;
     private string? _activeCatalogProfileId;
     private CatalogSecurityOptions _currentSecurityOptions = CatalogSecurityOptions.Safe;
-    private InstallationOptionsModel _installationOptions = InstallationOptionsModel.Default;
+    // P16, sección 9: BypassStorage empieza desactivado en la UI (a diferencia del
+    // resto de InstallationOptions.Default) porque no hay mecanismo implementado
+    // todavía; el checkbox correspondiente está deshabilitado en el XAML para que
+    // nunca pueda marcarse desde la interfaz.
+    private InstallationOptionsModel _installationOptions = InstallationOptionsModel.Default with { BypassStorage = false };
 
     public MainWindow()
     {

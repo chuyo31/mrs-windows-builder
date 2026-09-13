@@ -20,6 +20,13 @@ public sealed record InstallationConfigurationAction
     /// <summary>Archivo/hive/artefacto concreto que se modificaría dentro del workspace.</summary>
     public string TargetArtifact { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Estado real de implementación (P16): la mayoría son <see cref="InstallationActionStatus.Implemented"/>;
+    /// "Storage bypass" es <see cref="InstallationActionStatus.NotImplemented"/> y "Offline OOBE" es
+    /// <see cref="InstallationActionStatus.PendingReliableMechanism"/> hasta confirmarse en la build objetivo.
+    /// </summary>
+    public InstallationActionStatus Status { get; init; } = InstallationActionStatus.Implemented;
+
     public string Tag => Category switch
     {
         InstallationActionCategory.Install => "[INSTALL]",
