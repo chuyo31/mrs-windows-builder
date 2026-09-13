@@ -1,0 +1,7 @@
+{
+  "id": "recommended",
+  "name": "Recomendado",
+  "description": "Balance entre limpieza y compatibilidad: elimina lo que la mayoría de usuarios no necesita, conserva frameworks y componentes de sistema. PENDIENTE: sin un inventario real de referencia todavía no hay ComponentId definitivos que rellenar aquí sin inventarlos; ver prompts/11-resultado.md.",
+  "version": 1,
+  "componentIds": []
+}

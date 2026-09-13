@@ -16,6 +16,7 @@
     <ProjectReference Include="..\MRS.ComponentCatalog\MRS.ComponentCatalog.csproj" />
     <ProjectReference Include="..\MRS.RemovalPlanning\MRS.RemovalPlanning.csproj" />
     <ProjectReference Include="..\MRS.RemovalEngine\MRS.RemovalEngine.csproj" />
+    <ProjectReference Include="..\MRS.ProfileEngine\MRS.ProfileEngine.csproj" />
   </ItemGroup>
 
 </Project>

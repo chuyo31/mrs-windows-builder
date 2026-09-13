@@ -18,6 +18,8 @@ using MRS.ImageEngine.Inventory;
 using MRS.ImageEngine.Iso;
 using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
+using MRS.ProfileEngine;
+using MRS.ProfileEngine.Models;
 using MRS.RemovalEngine;
 using MRS.RemovalEngine.Models;
 using MRS.RemovalPlanning;
@@ -61,6 +63,7 @@ public partial class MainWindow : Window
     private readonly ImageInventoryService _inventoryService;
     private readonly ComponentCatalogService _catalogService = new();
     private readonly RemovalPlanBuilder _removalPlanBuilder = new();
+    private readonly IProfileService _profileService = new ProfileService();
 
     private readonly IIsoMounter _isoMounter;
     private readonly IWorkingImageFactory _workingImageFactory;
@@ -79,6 +82,8 @@ public partial class MainWindow : Window
     private bool _isApplyingChanges;
     private bool _executionUiUnlocked;
     private string? _selectedProfile;
+    private ProfileLoadResult? _profileLoadResult;
+    private string? _activeCatalogProfileId;
 
     public MainWindow()
     {
@@ -95,8 +100,58 @@ public partial class MainWindow : Window
         _workingImageFactory = new WorkingImageFactory(dismRunner, _logger);
         _removalEngine = new RemovalEngineClass(dismRunner, _logger);
 
+        LoadProfiles();
+
         _logger.Info("MRS Windows Builder iniciado");
         _logger.Info("Esperando seleccionar una ISO");
+    }
+
+    // ---- Perfiles (P11) -----------------------------------------------------
+
+    /// <summary>
+    /// Los perfiles viven fuera del código (<c>profiles/*.json</c>) para poder
+    /// cambiarlos sin recompilar. Un archivo inválido se registra como error
+    /// pero no impide arrancar la aplicación ni cargar el resto de perfiles.
+    /// </summary>
+    private void LoadProfiles()
+    {
+        var profilesDir = ResolveProfilesDirectory();
+        _profileLoadResult = profilesDir is null
+            ? new ProfileLoadResult(
+                Array.Empty<ProfileDefinition>(),
+                new[]
+                {
+                    new ProfileValidationError(
+                        "profiles/", null, ProfileValidationErrorCode.DirectoryNotFound,
+                        "No se encontró el directorio 'profiles' junto al ejecutable ni en los directorios superiores."),
+                })
+            : _profileService.LoadFromDirectory(profilesDir);
+
+        foreach (var error in _profileLoadResult.Errors)
+            _logger.Error($"[PROFILES] {error.FileName}: {error.Message}");
+
+        _logger.Info($"[PROFILES] {_profileLoadResult.Profiles.Count} perfil(es) cargado(s)" +
+                     (profilesDir is null ? "." : $" desde {profilesDir}."));
+    }
+
+    /// <summary>
+    /// Busca una carpeta "profiles" a partir del directorio del ejecutable, subiendo
+    /// hasta encontrarla (igual que <c>catalog/</c>, no se copia al output de
+    /// MRS.WindowsBuilder; en desarrollo vive en la raíz del repositorio).
+    /// </summary>
+    private static string? ResolveProfilesDirectory()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && !string.IsNullOrEmpty(dir); i++)
+        {
+            var candidate = Path.Combine(dir, "profiles");
+            if (Directory.Exists(candidate) && Directory.EnumerateFiles(candidate, "*.json").Any())
+                return candidate;
+
+            dir = Path.GetDirectoryName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+
+        return null;
     }
 
     // ---- Log ---------------------------------------------------------------
@@ -388,10 +443,21 @@ public partial class MainWindow : Window
         RenderComponents();
         ClearComponentDetail();
         UpdateSelectionSummary();
+        ResetProfileBar();
 
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Visible;
         StatusText.Text = "Catálogo generado";
+    }
+
+    /// <summary>Un catálogo nuevo (nueva ISO/edición) invalida cualquier perfil activo anterior.</summary>
+    private void ResetProfileBar()
+    {
+        _activeCatalogProfileId = null;
+        ProfileInfoText.Text = "Selecciona un perfil o marca componentes manualmente.";
+
+        foreach (var btn in new[] { ProfileMinimalButton, ProfileLightButton, ProfileRecommendedButton, ProfileCleanButton, ProfileCustomButton })
+            btn.Style = (Style)FindResource("OutlineButton");
     }
 
     private void RenderComponents()
@@ -456,6 +522,91 @@ public partial class MainWindow : Window
 
     private void ComponentSelectionCheckBox_Changed(object sender, RoutedEventArgs e)
         => UpdateSelectionSummary();
+
+    // ---- Perfiles (P11) -----------------------------------------------------
+
+    /// <summary>
+    /// Aplica un perfil sobre la selección actual: Selección de perfil -&gt; ComponentId
+    /// candidatos -&gt; filtrado por lo que exista realmente en <see cref="_allComponentRows"/>
+    /// -&gt; checkboxes. Nunca ejecuta nada ni salta el flujo Catalog -&gt; ProtectionEngine -&gt;
+    /// RemovalPlan: solo cambia qué casillas quedan marcadas, exactamente como si el
+    /// usuario las hubiera marcado a mano.
+    /// </summary>
+    private void ProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string profileId)
+            return;
+
+        HighlightActiveProfileButton(button);
+
+        if (_profileLoadResult is null)
+            return;
+
+        var profile = _profileService.GetProfile(_profileLoadResult, profileId);
+        if (profile is null)
+        {
+            ProfileInfoText.Text = $"Perfil '{profileId}' no disponible (revisa profiles/*.json).";
+            _logger.Error($"[PROFILES] Perfil '{profileId}' no encontrado al aplicarlo.");
+            return;
+        }
+
+        _activeCatalogProfileId = profile.Id;
+
+        if (profile.IsCustom)
+        {
+            // "Personalizado" no impone ninguna lista: es la selección manual tal cual está.
+            ProfileInfoText.Text = "Personalizado: se mantiene la selección manual actual.";
+            _logger.Info("[PROFILES] Perfil Personalizado activado: la selección no se modifica.");
+            return;
+        }
+
+        var knownIds = _allComponentRows.Select(row => row.Component.Id).ToList();
+        var protectedIds = _allComponentRows
+            .Where(row => !row.Editable)
+            .Select(row => row.Component.Id)
+            .ToList();
+
+        var selection = _profileService.GetSelection(profile, knownIds, protectedIds);
+        var selectedIds = selection.SelectedComponentIds.ToHashSet();
+
+        foreach (var row in _allComponentRows)
+            // row.Editable: nunca se marca un componente protegido, ni siquiera si el
+            // perfil lo pidiera. La decisión final de protección sigue siendo de
+            // ProtectionEngine/RemovalPlanning, no de ProfileEngine.
+            row.IsSelected = row.Editable && selectedIds.Contains(row.Component.Id);
+
+        RenderComponents(); // refresca los checkboxes visibles
+        UpdateSelectionSummary();
+
+        var pendingNote = profile.ComponentIds.Count == 0
+            ? " (perfil sin ComponentId reales todavía; ver prompts/11-resultado.md)"
+            : string.Empty;
+        var unknownNote = selection.UnknownComponentIds.Count > 0
+            ? $" · {selection.UnknownComponentIds.Count} ID(s) del perfil no existen en este catálogo"
+            : string.Empty;
+        var blockedNote = selection.BlockedComponentIds.Count > 0
+            ? $" · ⚠ {selection.BlockedComponentIds.Count} bloqueado(s) por protección"
+            : string.Empty;
+
+        ProfileInfoText.Text =
+            $"{profile.Name}: {selection.SelectedComponentIds.Count} componente(s) seleccionado(s)" +
+            unknownNote + blockedNote + pendingNote;
+
+        _logger.Info($"[PROFILES] Perfil '{profile.Id}' aplicado: {selection.SelectedComponentIds.Count} seleccionados, " +
+                     $"{selection.UnknownComponentIds.Count} desconocidos, {selection.BlockedComponentIds.Count} bloqueados.");
+    }
+
+    private void HighlightActiveProfileButton(Button active)
+    {
+        var buttons = new[]
+        {
+            ProfileMinimalButton, ProfileLightButton, ProfileRecommendedButton,
+            ProfileCleanButton, ProfileCustomButton,
+        };
+
+        foreach (var btn in buttons)
+            btn.Style = (Style)FindResource(btn == active ? "AccentButton" : "OutlineButton");
+    }
 
     /// <summary>
     /// Selección -&gt; Catálogo -&gt; Protección -&gt; Dependencias -&gt; RemovalPlan, recalculado en

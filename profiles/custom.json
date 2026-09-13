@@ -1,0 +1,10 @@
+{
+  "id": "custom",
+  "name": "Personalizado",
+  "description": "No es una lista fija: representa la selección manual que el usuario ya ha hecho a mano en la pantalla de COMPONENTES. Nunca sobrescribe la selección actual.",
+  "version": 1,
+  "componentIds": [],
+  "metadata": {
+    "kind": "custom"
+  }
+}

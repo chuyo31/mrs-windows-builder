@@ -1,0 +1,7 @@
+{
+  "id": "clean",
+  "name": "Limpio",
+  "description": "El más agresivo de los perfiles predefinidos (sigue respetando siempre la protección de ProtectionEngine). PENDIENTE: sin un inventario real de referencia todavía no hay ComponentId definitivos que rellenar aquí sin inventarlos; ver prompts/11-resultado.md.",
+  "version": 1,
+  "componentIds": []
+}

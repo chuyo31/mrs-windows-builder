@@ -1,0 +1,7 @@
+{
+  "id": "minimal",
+  "name": "Mínimo",
+  "description": "Elimina lo mínimo imprescindible. PENDIENTE: este catálogo se construye a partir del inventario real de la ISO analizada (los ComponentId tienen forma appx:/package:/feature:/capability:/driver: y dependen de la imagen concreta), por lo que aquí no se ha rellenado ninguna lista con IDs inventados. Ver prompts/11-resultado.md.",
+  "version": 1,
+  "componentIds": []
+}

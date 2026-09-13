@@ -714,6 +714,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
@@ -726,8 +727,38 @@
                                FontSize="12" Text="--"/>
                 </StackPanel>
 
+                <!-- Perfiles (P11): aplican una selección de ComponentId candidatos.
+                     No ejecutan nada; solo marcan/desmarcan casillas, igual que si el
+                     usuario lo hiciera a mano. -->
+                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="PERFILES" Foreground="{StaticResource TextSecondary}"
+                                   FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ProfileMinimalButton" Content="Mínimo" Tag="minimal"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Click="ProfileButton_Click"/>
+                            <Button x:Name="ProfileLightButton" Content="Ligero" Tag="light"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Click="ProfileButton_Click"/>
+                            <Button x:Name="ProfileRecommendedButton" Content="Recomendado" Tag="recommended"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Click="ProfileButton_Click"/>
+                            <Button x:Name="ProfileCleanButton" Content="Limpio" Tag="clean"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6" Margin="0,0,8,0"
+                                    Click="ProfileButton_Click"/>
+                            <Button x:Name="ProfileCustomButton" Content="Personalizado" Tag="custom"
+                                    Style="{StaticResource OutlineButton}" Padding="16,6"
+                                    Click="ProfileButton_Click"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ProfileInfoText" Foreground="{StaticResource TextSecondary}"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Text="Selecciona un perfil o marca componentes manualmente."/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Búsqueda + filtro -->
-                <Grid Grid.Row="1" Margin="0,14,0,12">
+                <Grid Grid.Row="2" Margin="0,14,0,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="220"/>
@@ -741,7 +772,7 @@
                 </Grid>
 
                 <!-- Lista + detalle -->
-                <Grid Grid.Row="2">
+                <Grid Grid.Row="3">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*"/>
                         <ColumnDefinition Width="320"/>
@@ -823,7 +854,7 @@
                 </Grid>
 
                 <!-- Resumen de selección + acciones -->
-                <StackPanel Grid.Row="3" Margin="0,16,0,0">
+                <StackPanel Grid.Row="4" Margin="0,16,0,0">
                     <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10">
                         <TextBlock x:Name="SelectionSummaryText" FontSize="12" Foreground="{StaticResource TextPrimary}"
                                    Text="Seleccionados: 0    Permitidos: 0    Bloqueados: 0    ⚠ Advertencias: 0"/>

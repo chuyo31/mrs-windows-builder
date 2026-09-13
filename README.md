@@ -41,18 +41,19 @@ varias bibliotecas de motor:
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
 | `MRS.RemovalPlanning` | `net8.0` | Motor de selección: RemovalPlan verificable, sin ejecutar nada. |
 | `MRS.RemovalEngine` | `net8.0` | Ejecuta el RemovalPlan sobre una copia de trabajo (Export/Mount/DISM/Commit-Discard). |
-| `MRS.ProfileEngine` | `net8.0` | Definición y aplicación de perfiles (NORMAL/LIGHT/MEDIUM). |
+| `MRS.ProfileEngine` | `net8.0` | Perfiles de eliminación en JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): producen una selección de ComponentId, nunca ejecutan nada. |
 | `MRS.PostInstall` | `net8.0` | Acciones de post-instalación y tweaks. |
 
 `MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog`,
-`MRS.RemovalPlanning` y `MRS.RemovalEngine` ya están implementados: análisis,
-inventario real, catálogo, plan de eliminación y ahora también su ejecución
-real sobre una copia de trabajo (la ISO original nunca se modifica). El resto
-de bibliotecas siguen siendo **stubs**.
+`MRS.RemovalPlanning`, `MRS.RemovalEngine` y `MRS.ProfileEngine` ya están
+implementados: análisis, inventario real, catálogo, plan de eliminación,
+ejecución real sobre una copia de trabajo (la ISO original nunca se
+modifica) y perfiles predefinidos. El resto de bibliotecas siguen siendo
+**stubs**.
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09, telemetría P10)
+## Estado actual — P7 (+ correcciones P08/P09, telemetría P10, perfiles P11)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -117,6 +118,20 @@ de progreso, etapa y porcentaje actuales, y un terminal en tiempo real
 por nivel. No se modificó el ciclo Mount→Execute→Verify→Commit/Discard ni
 el desbloqueo idempotente de P08/P09.
 
+**P11** — `MRS.ProfileEngine` (ver
+[`prompts/11-resultado.md`](prompts/11-resultado.md)): perfiles de
+eliminación definidos en `profiles/*.json` (Mínimo/Ligero/Recomendado/Limpio/
+Personalizado). Un perfil solo produce una lista de ComponentId candidatos;
+la protección y las dependencias reales siguen decidiéndose siempre en
+`MRS.ComponentCatalog`/`MRS.RemovalPlanning`. En la pantalla COMPONENTES,
+aplicar un perfil solo marca/desmarca casillas (nunca ejecuta nada), y un
+componente protegido no se marca aunque el perfil lo pidiera. Los 4 perfiles
+predefinidos se han dejado estructuralmente válidos pero con `componentIds`
+vacío: el catálogo real depende del inventario DISM de una ISO concreta y no
+existe un catálogo estático de referencia en el repositorio para rellenarlos
+sin inventar IDs (documentado en el resultado de P11). "Personalizado" no
+impone lista fija: representa la selección manual del usuario.
+
 **Todavía NO hace:**
 
 - Perfiles Normal/Light/Medium/Ultra/Custom automáticos, `/Remove` de
@@ -152,17 +167,20 @@ src/
   MRS.ImageEngine/        Modelos, parsers de DISM, montaje de ISO, ImageService, ImageInventoryService
   MRS.ComponentCatalog/   Clasificación, protección, dependencias, búsqueda/filtros del catálogo
   MRS.RemovalPlanning/    RemovalPlanBuilder/Validator/Serializer (sin referenciar MRS.DismEngine)
-  MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard)
+  MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard), telemetría ProgressInfo
+  MRS.ProfileEngine/      Perfiles JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): solo producen una selección de ComponentId
   MRS.ISOEngine/          (stub)
-  MRS.ProfileEngine/      (stub)
   MRS.PostInstall/        (stub)
 tests/
-  MRS.ImageEngine.Tests/       Tests xUnit (parsers, análisis, inventario, workspace)
-  MRS.ComponentCatalog.Tests/  Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
-  MRS.RemovalPlanning.Tests/   Tests xUnit (selección, protección, dependencias, plan, validación, JSON)
+  MRS.ImageEngine.Tests/        Tests xUnit (parsers, análisis, inventario, workspace)
+  MRS.ComponentCatalog.Tests/   Tests xUnit (clasificación, protección, dependencias, búsqueda/filtros)
+  MRS.RemovalPlanning.Tests/    Tests xUnit (selección, protección, dependencias, plan, validación, JSON)
+  MRS.RemovalEngine.Tests/      Tests xUnit (ejecución transaccional, workspace, telemetría de progreso)
+  MRS.ProfileEngine.Tests/      Tests xUnit (carga de JSON, validación, selección de ComponentId)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
-app-packs/  docs/  profiles/   (reservados, vacíos)
+profiles/                 Perfiles de eliminación en JSON (minimal/light/recommended/clean/custom)
+app-packs/  docs/         (reservados, vacíos)
 ```
 
 ---
@@ -179,5 +197,5 @@ app-packs/  docs/  profiles/   (reservados, vacíos)
 - [x] **P08** – corrección: la UI de ejecución se desbloquea de forma idempotente en cuanto el motor termina, sin esperar al reinventario posterior.
 - [x] **P09** – corrección: auditoría y saneado del ciclo de vida workspace/mount (no se borra un workspace sin confirmar el desmontaje).
 - [x] **P10** – telemetría de progreso (`ProgressInfo`/`IProgress<T>`, sin WPF) + pantalla "CREANDO IMAGEN" con barra de progreso y terminal en tiempo real.
-- [ ] **P11** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom (selección automática sobre el catálogo).
+- [x] **P11** – `MRS.ProfileEngine`: perfiles Mínimo/Ligero/Recomendado/Limpio/Personalizado definidos en JSON; solo producen una selección de ComponentId, la protección real sigue en ProtectionEngine/RemovalPlanning. Perfiles predefinidos pendientes de ComponentId reales (requieren un inventario de referencia; ver `prompts/11-resultado.md`).
 - [ ] **P12** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.
