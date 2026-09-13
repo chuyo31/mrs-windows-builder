@@ -28,6 +28,16 @@ public sealed record ProfileDefinition
     public IReadOnlyDictionary<string, string>? Metadata { get; init; }
 
     /// <summary>
+    /// Configuración de seguridad del perfil (P13): si mantiene Defender y Windows
+    /// Update. Por defecto ambos protegidos (<see cref="SecurityOptions.Safe"/>) —
+    /// un JSON de perfil sin <c>securityOptions</c> usa este mismo valor seguro.
+    /// Para MÍNIMO/LIGERO/RECOMENDADO, usar siempre <see cref="EffectiveSecurityOptions"/>
+    /// en vez de esta propiedad directamente: esos tres perfiles no pueden dejar de
+    /// proteger Defender/Windows Update pase lo que pase en el JSON.
+    /// </summary>
+    public SecurityOptions SecurityOptions { get; init; } = SecurityOptions.Safe;
+
+    /// <summary>
     /// Un perfil "Personalizado" no impone una lista fija de componentes: representa
     /// la selección manual que el usuario ya ha hecho a mano en la pantalla de
     /// COMPONENTES. Se detecta por convención (id "custom" o metadata "kind":"custom")
@@ -38,4 +48,24 @@ public sealed record ProfileDefinition
         (Metadata is not null
             && Metadata.TryGetValue("kind", out var kind)
             && string.Equals(kind, "custom", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// MÍNIMO, LIGERO y RECOMENDADO (P13): Defender y Windows Update deben permanecer
+    /// siempre protegidos en estos tres perfiles, sin ninguna forma de excepción
+    /// accidental (ni siquiera si el JSON del perfil declarase lo contrario). Se
+    /// identifican por Id, no por metadata: es una política fija del producto, no
+    /// una opción configurable perfil a perfil.
+    /// </summary>
+    public bool IsSecurityLocked => SecurityLockedProfileIds.Contains(Id);
+
+    private static readonly HashSet<string> SecurityLockedProfileIds =
+        new(StringComparer.OrdinalIgnoreCase) { "minimal", "light", "recommended" };
+
+    /// <summary>
+    /// La configuración de seguridad que realmente debe aplicarse. Para los perfiles
+    /// bloqueados (<see cref="IsSecurityLocked"/>) siempre es <see cref="SecurityOptions.Safe"/>,
+    /// pase lo que pase en <see cref="SecurityOptions"/>; para el resto (Limpio,
+    /// Personalizado) es la configuración del perfil, modificable desde la UI.
+    /// </summary>
+    public SecurityOptions EffectiveSecurityOptions => IsSecurityLocked ? SecurityOptions.Safe : SecurityOptions;
 }

@@ -97,6 +97,10 @@ public sealed class ProfileService : IProfileService
             Version = raw.Version,
             ComponentIds = (raw.ComponentIds ?? new List<string>()).ToList(),
             Metadata = raw.Metadata,
+            // Un JSON sin "securityOptions" (perfil anterior a P13) usa el valor
+            // seguro por defecto: nunca se interpreta la ausencia del campo como
+            // "sin protección".
+            SecurityOptions = raw.SecurityOptions ?? Models.SecurityOptions.Safe,
         });
     }
 
@@ -151,5 +155,6 @@ public sealed class ProfileService : IProfileService
         public int Version { get; set; } = 1;
         public List<string>? ComponentIds { get; set; }
         public Dictionary<string, string>? Metadata { get; set; }
+        public Models.SecurityOptions? SecurityOptions { get; set; }
     }
 }

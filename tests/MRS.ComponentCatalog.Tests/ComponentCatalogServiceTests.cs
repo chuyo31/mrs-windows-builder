@@ -134,4 +134,38 @@ public class ComponentCatalogServiceTests
 
         Assert.Equal(catalog.TotalCount, results.Count);
     }
+
+    // ---- P13: SecurityOptions de extremo a extremo (Inventory -> Catalog) --
+
+    [Fact]
+    public void BuildCatalog_protects_Defender_by_default_with_no_security_options()
+    {
+        var catalog = _service.BuildCatalog(FakeInventory.Sample());
+
+        var defender = Find(catalog.Components, "Defender");
+
+        Assert.Equal(ComponentProtection.Protected, defender.Protection);
+    }
+
+    [Fact]
+    public void BuildCatalog_no_longer_protects_Defender_specifically_when_KeepDefender_is_false()
+    {
+        var catalog = _service.BuildCatalog(FakeInventory.Sample(), new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = true });
+
+        var defender = Find(catalog.Components, "Defender");
+
+        Assert.NotEqual(ComponentProtection.Protected, defender.Protection);
+    }
+
+    [Fact]
+    public void BuildCatalog_keeps_ServicingStack_and_WinRE_protected_even_when_both_security_options_are_false()
+    {
+        var catalog = _service.BuildCatalog(FakeInventory.Sample(), new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = false });
+
+        var servicingStack = Find(catalog.Components, "ServicingStack");
+        var winre = Find(catalog.Components, "WinRE");
+
+        Assert.Equal(ComponentProtection.Protected, servicingStack.Protection);
+        Assert.Equal(ComponentProtection.Protected, winre.Protection);
+    }
 }

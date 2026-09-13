@@ -190,4 +190,107 @@ public sealed class ProfileServiceTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); }
         catch { /* best-effort */ }
     }
+
+    // ---- P13: SecurityOptions ------------------------------------------------
+
+    [Fact]
+    public void A_profile_with_no_securityOptions_in_JSON_defaults_to_safe_values()
+    {
+        WriteProfile("clean.json", """{"id":"clean","name":"Limpio","version":1,"componentIds":[]}""");
+
+        var result = _service.LoadFromDirectory(_dir);
+        var profile = _service.GetProfile(result, "clean")!;
+
+        Assert.True(profile.SecurityOptions.KeepDefender);
+        Assert.True(profile.SecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Fact]
+    public void A_profile_can_declare_securityOptions_in_JSON()
+    {
+        WriteProfile("clean.json", """
+            {"id":"clean","name":"Limpio","version":1,"componentIds":[],
+             "securityOptions":{"keepDefender":false,"keepWindowsUpdate":true}}
+            """);
+
+        var result = _service.LoadFromDirectory(_dir);
+        var profile = _service.GetProfile(result, "clean")!;
+
+        Assert.False(profile.SecurityOptions.KeepDefender);
+        Assert.True(profile.SecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Theory]
+    [InlineData("minimal")]
+    [InlineData("light")]
+    [InlineData("recommended")]
+    public void Minimal_light_and_recommended_always_keep_Defender_and_WindowsUpdate(string profileId)
+    {
+        // Aunque el JSON intentase desactivarlos, EffectiveSecurityOptions debe
+        // seguir devolviendo siempre valores seguros para estos tres perfiles.
+        WriteProfile($"{profileId}.json",
+            "{\"id\":\"" + profileId + "\",\"name\":\"x\",\"version\":1,\"componentIds\":[]," +
+            "\"securityOptions\":{\"keepDefender\":false,\"keepWindowsUpdate\":false}}");
+
+        var result = _service.LoadFromDirectory(_dir);
+        var profile = _service.GetProfile(result, profileId)!;
+
+        Assert.True(profile.IsSecurityLocked);
+        Assert.True(profile.EffectiveSecurityOptions.KeepDefender);
+        Assert.True(profile.EffectiveSecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Fact]
+    public void Clean_allows_changing_Defender_via_its_own_SecurityOptions()
+    {
+        var profile = new ProfileDefinition
+        {
+            Id = "clean",
+            SecurityOptions = new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = true },
+        };
+
+        Assert.False(profile.IsSecurityLocked);
+        Assert.False(profile.EffectiveSecurityOptions.KeepDefender);
+        Assert.True(profile.EffectiveSecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Fact]
+    public void Clean_allows_changing_WindowsUpdate_via_its_own_SecurityOptions()
+    {
+        var profile = new ProfileDefinition
+        {
+            Id = "clean",
+            SecurityOptions = new SecurityOptions { KeepDefender = true, KeepWindowsUpdate = false },
+        };
+
+        Assert.False(profile.IsSecurityLocked);
+        Assert.True(profile.EffectiveSecurityOptions.KeepDefender);
+        Assert.False(profile.EffectiveSecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Fact]
+    public void Custom_allows_changing_both_Defender_and_WindowsUpdate()
+    {
+        var profile = new ProfileDefinition
+        {
+            Id = "custom",
+            Metadata = new Dictionary<string, string> { ["kind"] = "custom" },
+            SecurityOptions = new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = false },
+        };
+
+        Assert.True(profile.IsCustom);
+        Assert.False(profile.IsSecurityLocked);
+        Assert.False(profile.EffectiveSecurityOptions.KeepDefender);
+        Assert.False(profile.EffectiveSecurityOptions.KeepWindowsUpdate);
+    }
+
+    [Fact]
+    public void SecurityOptions_default_constructor_is_always_safe()
+    {
+        var defaults = new SecurityOptions();
+
+        Assert.True(defaults.KeepDefender);
+        Assert.True(defaults.KeepWindowsUpdate);
+        Assert.Equal(SecurityOptions.Safe, defaults);
+    }
 }

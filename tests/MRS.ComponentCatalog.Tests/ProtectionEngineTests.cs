@@ -120,4 +120,100 @@ public class ProtectionEngineTests
         Assert.Equal(ComponentProtection.Unknown, result[0].Protection);
         Assert.Equal(ComponentProtection.Protected, result[1].Protection);
     }
+
+    // ---- P13: SecurityOptions (Defender / Windows Update) -------------------
+
+    [Fact]
+    public void Defender_is_protected_by_default_with_no_security_options()
+    {
+        var result = _engine.Apply(Component("Microsoft-Windows-Defender-Package"));
+
+        Assert.Equal(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Fact]
+    public void Defender_is_protected_when_KeepDefender_is_true()
+    {
+        var options = new SecurityOptions { KeepDefender = true, KeepWindowsUpdate = true };
+
+        var result = _engine.Apply(Component("Microsoft-Windows-Defender-Package"), options);
+
+        Assert.Equal(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Fact]
+    public void Defender_is_no_longer_blocked_by_this_rule_when_KeepDefender_is_false()
+    {
+        var options = new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = true };
+
+        var result = _engine.Apply(Component("Microsoft-Windows-Defender-Package"), options);
+
+        // "Permitido" no significa "eliminado": solo deja de estar protegido por
+        // esta regla específica. No se ejecuta ninguna desactivación real (P13).
+        Assert.NotEqual(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Fact]
+    public void WindowsUpdate_is_protected_when_KeepWindowsUpdate_is_true()
+    {
+        var options = new SecurityOptions { KeepDefender = true, KeepWindowsUpdate = true };
+
+        var result = _engine.Apply(Component("Microsoft-Windows-WindowsUpdate-Package"), options);
+
+        Assert.Equal(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Fact]
+    public void WindowsUpdate_is_no_longer_blocked_by_this_rule_when_KeepWindowsUpdate_is_false()
+    {
+        var options = new SecurityOptions { KeepDefender = true, KeepWindowsUpdate = false };
+
+        var result = _engine.Apply(Component("Microsoft-Windows-WindowsUpdate-Package"), options);
+
+        Assert.NotEqual(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Theory]
+    [InlineData("Microsoft-Windows-ServicingStack-OnDemand-Package")] // Servicing Stack
+    [InlineData("Microsoft-Windows-WinRE-Package")] // WinRE
+    [InlineData("Microsoft-Windows-OOBE-Package")] // OOBE
+    [InlineData("Microsoft-Windows-Ethernet-Package")] // red
+    [InlineData("Microsoft-Windows-Audio-Package")] // audio
+    [InlineData("Microsoft-Windows-USB-Package")] // USB
+    [InlineData("Microsoft-Windows-Print-Package")] // impresión
+    [InlineData("Microsoft.UI.Xaml.2.8")] // framework necesario
+    public void Other_critical_protections_are_unaffected_by_KeepDefender_false(string name)
+    {
+        var options = new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = false };
+
+        var result = _engine.Apply(Component(name), options);
+
+        Assert.Equal(ComponentProtection.Protected, result.Protection);
+    }
+
+    [Fact]
+    public void Other_windows_update_related_protections_are_unaffected_by_KeepWindowsUpdate_false()
+    {
+        // CBS/SSU/LCU/ServicingStack son parte del servicing stack, no de "Windows
+        // Update" en sí: KeepWindowsUpdate=false nunca debe debilitarlas.
+        var options = new SecurityOptions { KeepDefender = true, KeepWindowsUpdate = false };
+
+        Assert.Equal(ComponentProtection.Protected, _engine.Apply(Component("Microsoft-Windows-ServicingStack-OnDemand-Package"), options).Protection);
+        Assert.Equal(ComponentProtection.Protected, _engine.Apply(Component("Package_for_KB123456~amd64~CBS~1.0.0.0"), options).Protection);
+        Assert.Equal(ComponentProtection.Protected, _engine.Apply(Component("Package_for_KB123456~amd64~SSU~1.0.0.0"), options).Protection);
+        Assert.Equal(ComponentProtection.Protected, _engine.Apply(Component("Package_for_KB123456~amd64~LCU~1.0.0.0"), options).Protection);
+    }
+
+    [Fact]
+    public void SecurityHealth_is_unaffected_by_KeepDefender_false()
+    {
+        // SecurityHealth es un componente de "Seguridad de Windows" distinto del
+        // motor de Defender propiamente dicho; KeepDefender solo afecta a la regla
+        // "windows-defender".
+        var options = new SecurityOptions { KeepDefender = false, KeepWindowsUpdate = true };
+
+        var result = _engine.Apply(Component("Microsoft-Windows-SecurityHealth-Package"), options);
+
+        Assert.Equal(ComponentProtection.Protected, result.Protection);
+    }
 }

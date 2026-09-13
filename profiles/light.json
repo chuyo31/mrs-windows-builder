@@ -3,5 +3,9 @@
   "name": "Ligero",
   "description": "Elimina aplicaciones y componentes de bajo riesgo (Gaming, Comunicación, Store, Bing). PENDIENTE: sin un inventario real de referencia todavía no hay ComponentId definitivos que rellenar aquí sin inventarlos; ver prompts/11-resultado.md.",
   "version": 1,
-  "componentIds": []
+  "componentIds": [],
+  "securityOptions": {
+    "keepDefender": true,
+    "keepWindowsUpdate": true
+  }
 }

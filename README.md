@@ -53,7 +53,7 @@ modifica) y perfiles predefinidos. El resto de bibliotecas siguen siendo
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09, telemetría P10, perfiles P11)
+## Estado actual — P7 (+ correcciones P08/P09/P12, telemetría P10, perfiles P11/P13)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -132,9 +132,30 @@ existe un catálogo estático de referencia en el repositorio para rellenarlos
 sin inventar IDs (documentado en el resultado de P11). "Personalizado" no
 impone lista fija: representa la selección manual del usuario.
 
+**P12** — corrección: la pantalla inicial todavía mostraba un widget de
+perfiles anterior a P11 (`NORMAL`/`LIGHT`/`MEDIUM`, sin conexión real con
+`ProfileService`). Sustituido por los 5 perfiles reales, compartiendo la
+misma lógica de aplicación (`ApplyProfile`) con la barra de COMPONENTES:
+elegir un perfil ahí antes de analizar la ISO queda como preselección y se
+aplica en cuanto se genera el catálogo real (ver
+[`prompts/12-resultado.md`](prompts/12-resultado.md)).
+
+**P13** — `SecurityOptions` por perfil (ver
+[`prompts/13-resultado.md`](prompts/13-resultado.md)): decide si Microsoft
+Defender y Windows Update se mantienen protegidos. Mínimo, Ligero y
+Recomendado los protegen siempre (`ProfileDefinition.EffectiveSecurityOptions`
+ignora cualquier otro valor para esos tres perfiles); Limpio y Personalizado
+muestran una sección "OPCIONES AVANZADAS" en COMPONENTES con dos casillas
+(ambas empiezan marcadas, con advertencia al desmarcarlas). Cambiar estas
+casillas recalcula el catálogo en memoria (mismo `_inventory`, sin DISM) y
+el `RemovalPlan` refleja el cambio de protección — pero "ya no protegido"
+no equivale a "se elimina": la implementación real de desactivación queda
+para una fase posterior e independiente.
+
 **Todavía NO hace:**
 
-- Perfiles Normal/Light/Medium/Ultra/Custom automáticos, `/Remove` de
+- Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
+  solo configuración + planificación + UI + protección), `/Remove` de
   features, limpieza de checkpoints/ResetBase, compresión, creación de la
   ISO final, PCPI ni App Packs.
 
@@ -198,4 +219,6 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P09** – corrección: auditoría y saneado del ciclo de vida workspace/mount (no se borra un workspace sin confirmar el desmontaje).
 - [x] **P10** – telemetría de progreso (`ProgressInfo`/`IProgress<T>`, sin WPF) + pantalla "CREANDO IMAGEN" con barra de progreso y terminal en tiempo real.
 - [x] **P11** – `MRS.ProfileEngine`: perfiles Mínimo/Ligero/Recomendado/Limpio/Personalizado definidos en JSON; solo producen una selección de ComponentId, la protección real sigue en ProtectionEngine/RemovalPlanning. Perfiles predefinidos pendientes de ComponentId reales (requieren un inventario de referencia; ver `prompts/11-resultado.md`).
-- [ ] **P12** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.
+- [x] **P12** – corrección: sustituidos los botones de perfil legados (NORMAL/LIGHT/MEDIUM, anteriores a P11) por los 5 perfiles reales, reutilizando la misma lógica en la pantalla inicial (preselección) y en COMPONENTES.
+- [x] **P13** – opciones de seguridad por perfil (`SecurityOptions`: mantener Defender/Windows Update). Mínimo/Ligero/Recomendado los protegen siempre; Limpio/Personalizado permiten decidirlo desde "OPCIONES AVANZADAS". Solo configuración/planificación — sin ejecutar ninguna desactivación real (ver `prompts/13-resultado.md`).
+- [ ] **P14** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.

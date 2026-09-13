@@ -17,4 +17,14 @@ public sealed record ProtectionRule
     public ComponentRisk Risk { get; init; } = ComponentRisk.High;
     public string Reason { get; init; } = string.Empty;
     public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// Marca esta regla como perteneciente a Defender o a Windows Update (P13), para
+    /// que <see cref="MRS.ComponentCatalog.Classification.ProtectionEngine"/> pueda
+    /// dejar de aplicarla cuando el <see cref="SecurityOptions"/> vigente lo pida.
+    /// <c>null</c> en cualquier otra regla: esas nunca se ven afectadas por
+    /// <see cref="SecurityOptions"/> (Servicing Stack, CBS, LCU, WinRE, OOBE, red,
+    /// USB, audio, impresión, frameworks, etc. siguen protegidas siempre).
+    /// </summary>
+    public SecurityFeature? SecurityFeature { get; init; }
 }

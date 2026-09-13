@@ -19,14 +19,25 @@ public sealed class ProtectionEngine
             .Where(r => r.Enabled)
             .ToList();
 
-    public ComponentDefinition Apply(ComponentDefinition component)
+    /// <summary>
+    /// <paramref name="securityOptions"/> (P13) decide si las reglas marcadas con
+    /// <see cref="ProtectionRule.SecurityFeature"/> (Defender / Windows Update) se
+    /// siguen aplicando. <c>null</c> equivale a <see cref="SecurityOptions.Safe"/>:
+    /// mismo comportamiento que antes de P13. El resto de reglas (sin
+    /// <see cref="ProtectionRule.SecurityFeature"/>) nunca se ven afectadas.
+    /// </summary>
+    public ComponentDefinition Apply(ComponentDefinition component, SecurityOptions? securityOptions = null)
     {
+        var options = securityOptions ?? SecurityOptions.Safe;
         var matchText = $"{component.Name} {component.DisplayName} {component.Description}";
 
         foreach (var rule in _rules)
         {
             if (!matchText.Contains(rule.Pattern, StringComparison.OrdinalIgnoreCase))
                 continue;
+
+            if (IsSuppressedByOptions(rule, options))
+                continue; // KeepDefender/KeepWindowsUpdate = false: esta regla concreta no protege, pero no toca ninguna otra.
 
             return component with
             {
@@ -42,8 +53,15 @@ public sealed class ProtectionEngine
         return component;
     }
 
-    public IReadOnlyList<ComponentDefinition> ApplyAll(IEnumerable<ComponentDefinition> components)
-        => components.Select(Apply).ToList();
+    public IReadOnlyList<ComponentDefinition> ApplyAll(IEnumerable<ComponentDefinition> components, SecurityOptions? securityOptions = null)
+        => components.Select(c => Apply(c, securityOptions)).ToList();
+
+    private static bool IsSuppressedByOptions(ProtectionRule rule, SecurityOptions options) => rule.SecurityFeature switch
+    {
+        SecurityFeature.Defender => !options.KeepDefender,
+        SecurityFeature.WindowsUpdate => !options.KeepWindowsUpdate,
+        _ => false,
+    };
 
     private static ComponentRisk MaxRisk(ComponentRisk a, ComponentRisk b) => (ComponentRisk)Math.Max((int)a, (int)b);
 }

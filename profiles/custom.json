@@ -6,5 +6,9 @@
   "componentIds": [],
   "metadata": {
     "kind": "custom"
+  },
+  "securityOptions": {
+    "keepDefender": true,
+    "keepWindowsUpdate": true
   }
 }

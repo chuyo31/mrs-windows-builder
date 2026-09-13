@@ -131,12 +131,14 @@ public static class DefaultCatalogRules
             Id = "windows-update", Pattern = "WindowsUpdate", Risk = ComponentRisk.Critical,
             Category = ComponentCategory.WindowsUpdate,
             Reason = "Necesario para el funcionamiento de Windows Update.",
+            SecurityFeature = SecurityFeature.WindowsUpdate,
         },
         new ProtectionRule
         {
             Id = "windows-defender", Pattern = "Defender", Risk = ComponentRisk.Critical,
             Category = ComponentCategory.Security,
             Reason = "Motor de protección de Microsoft Defender / Seguridad de Windows.",
+            SecurityFeature = SecurityFeature.Defender,
         },
         new ProtectionRule
         {

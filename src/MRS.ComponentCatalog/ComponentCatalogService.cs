@@ -25,12 +25,19 @@ public sealed class ComponentCatalogService
         _dependencies = new DependencyResolver();
     }
 
-    public ComponentCatalogResult BuildCatalog(ImageInventory inventory)
+    /// <summary>
+    /// <paramref name="securityOptions"/> (P13) decide si Defender/Windows Update
+    /// se mantienen protegidos; <c>null</c> equivale a <see cref="SecurityOptions.Safe"/>
+    /// (comportamiento idéntico al anterior a P13). No ejecuta DISM ni toca la imagen:
+    /// es una recomputación en memoria, segura de repetir cada vez que cambie la
+    /// configuración de seguridad del perfil activo.
+    /// </summary>
+    public ComponentCatalogResult BuildCatalog(ImageInventory inventory, SecurityOptions? securityOptions = null)
     {
         ArgumentNullException.ThrowIfNull(inventory);
 
         var classified = _classifier.Classify(inventory);
-        var protectedComponents = _protection.ApplyAll(classified);
+        var protectedComponents = _protection.ApplyAll(classified, securityOptions);
         var dependencies = _dependencies.Resolve(protectedComponents);
 
         var withDependencies = protectedComponents

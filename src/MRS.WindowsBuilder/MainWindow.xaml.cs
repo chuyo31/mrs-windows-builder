@@ -29,6 +29,11 @@ using MRS.RemovalPlanning.Models;
 // siempre gana en la búsqueda de nombres sin cualificar, así que se referencia
 // la clase con un alias explícito.
 using RemovalEngineClass = MRS.RemovalEngine.RemovalEngine;
+// MRS.ComponentCatalog.Models y MRS.ProfileEngine.Models (P13) tienen cada uno su
+// propio "SecurityOptions" -- deliberadamente sin project reference entre ambos,
+// igual que en P11 -- así que aquí, el único punto que conoce los dos mundos, se
+// desambigua con un alias explícito para el del catálogo.
+using CatalogSecurityOptions = MRS.ComponentCatalog.Models.SecurityOptions;
 
 namespace MRS.WindowsBuilder;
 
@@ -83,6 +88,7 @@ public partial class MainWindow : Window
     private bool _executionUiUnlocked;
     private ProfileLoadResult? _profileLoadResult;
     private string? _activeCatalogProfileId;
+    private CatalogSecurityOptions _currentSecurityOptions = CatalogSecurityOptions.Safe;
 
     public MainWindow()
     {
@@ -409,17 +415,8 @@ public partial class MainWindow : Window
 
     private void ShowComponents(ComponentCatalogResult catalog)
     {
-        _catalog = catalog;
-
-        ComponentsSummary.Text =
-            $"{catalog.TotalCount} componentes · {catalog.ProtectedCount} protegidos · " +
-            $"{catalog.RemovableCount} removibles · {catalog.OptionalCount} opcionales · " +
-            $"{catalog.CriticalCount} críticos";
-
-        _allComponentRows = catalog.Components
-            .Select(c => new ComponentRow(c))
-            .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        _currentSecurityOptions = CatalogSecurityOptions.Safe;
+        PopulateComponentRows(catalog);
 
         ComponentSearchBox.Text = string.Empty;
 
@@ -448,11 +445,66 @@ public partial class MainWindow : Window
         StatusText.Text = "Catálogo generado";
     }
 
+    /// <summary>
+    /// Reemplaza <see cref="_catalog"/> y <see cref="_allComponentRows"/> a partir de un
+    /// <see cref="ComponentCatalogResult"/> ya construido, y refresca el resumen de la
+    /// cabecera. Compartido por <see cref="ShowComponents"/> y
+    /// <see cref="RebuildCatalogWithCurrentSecurityOptions"/> para no duplicar la
+    /// construcción de filas.
+    /// </summary>
+    private void PopulateComponentRows(ComponentCatalogResult catalog)
+    {
+        _catalog = catalog;
+
+        ComponentsSummary.Text =
+            $"{catalog.TotalCount} componentes · {catalog.ProtectedCount} protegidos · " +
+            $"{catalog.RemovableCount} removibles · {catalog.OptionalCount} opcionales · " +
+            $"{catalog.CriticalCount} críticos";
+
+        _allComponentRows = catalog.Components
+            .Select(c => new ComponentRow(c))
+            .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// P13: recalcula el catálogo (protección de Defender/Windows Update incluida)
+    /// con <see cref="_currentSecurityOptions"/> vigente, preservando la selección
+    /// manual actual por ComponentId. Pura recomputación en memoria sobre
+    /// <see cref="_inventory"/> ya obtenido: no ejecuta DISM ni toca la imagen. No hace
+    /// nada si todavía no hay imagen analizada (se llamó desde la preselección de la
+    /// pantalla inicial).
+    /// </summary>
+    private void RebuildCatalogWithCurrentSecurityOptions()
+    {
+        if (_inventory is null || _catalog is null)
+            return;
+
+        var previouslySelected = _allComponentRows
+            .Where(row => row.IsSelected)
+            .Select(row => row.Component.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var catalog = _catalogService.BuildCatalog(_inventory, _currentSecurityOptions);
+        PopulateComponentRows(catalog);
+
+        foreach (var row in _allComponentRows)
+            // row.Editable: si Defender/Windows Update volvieron a protegerse (por
+            // ejemplo al cambiar a un perfil bloqueado), la selección previa se
+            // descarta para ese componente igual que con cualquier otro protegido.
+            row.IsSelected = row.Editable && previouslySelected.Contains(row.Component.Id);
+
+        RenderComponents();
+        UpdateSelectionSummary();
+    }
+
     /// <summary>Un catálogo nuevo (nueva ISO/edición) invalida cualquier perfil activo anterior.</summary>
     private void ResetProfileBar()
     {
         _activeCatalogProfileId = null;
+        _currentSecurityOptions = CatalogSecurityOptions.Safe;
         ProfileInfoText.Text = "Selecciona un perfil o marca componentes manualmente.";
+        SecurityOptionsPanel.Visibility = Visibility.Collapsed;
 
         foreach (var btn in ProfileButtons)
             btn.Style = (Style)FindResource("OutlineButton");
@@ -575,6 +627,13 @@ public partial class MainWindow : Window
 
         _activeCatalogProfileId = profile.Id;
 
+        // P13: Mínimo/Ligero/Recomendado siempre fuerzan Defender/Windows Update
+        // protegidos (EffectiveSecurityOptions); Limpio/Personalizado parten de la
+        // configuración del propio perfil (JSON) y se pueden cambiar con las casillas.
+        _currentSecurityOptions = ToCatalogSecurityOptions(profile.EffectiveSecurityOptions);
+        UpdateSecurityOptionsPanel(profile);
+        RebuildCatalogWithCurrentSecurityOptions();
+
         if (profile.IsCustom)
         {
             // "Personalizado" no impone ninguna lista: es la selección manual tal cual está.
@@ -625,6 +684,77 @@ public partial class MainWindow : Window
             btn.Style = (Style)FindResource(
                 string.Equals(btn.Tag as string, profileId, StringComparison.OrdinalIgnoreCase)
                     ? "AccentButton" : "OutlineButton");
+    }
+
+    private static CatalogSecurityOptions ToCatalogSecurityOptions(MRS.ProfileEngine.Models.SecurityOptions options)
+        => new() { KeepDefender = options.KeepDefender, KeepWindowsUpdate = options.KeepWindowsUpdate };
+
+    /// <summary>
+    /// Muestra el panel de seguridad que corresponde a <paramref name="profile"/> (P13):
+    /// solo información para Mínimo/Ligero/Recomendado (<see cref="ProfileDefinition.IsSecurityLocked"/>),
+    /// casillas modificables para Limpio/Personalizado.
+    /// </summary>
+    private void UpdateSecurityOptionsPanel(ProfileDefinition profile)
+    {
+        SecurityOptionsPanel.Visibility = Visibility.Visible;
+
+        if (profile.IsSecurityLocked)
+        {
+            SecurityLockedPanel.Visibility = Visibility.Visible;
+            SecurityConfigurablePanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SecurityLockedPanel.Visibility = Visibility.Collapsed;
+        SecurityConfigurablePanel.Visibility = Visibility.Visible;
+
+        // Refleja _currentSecurityOptions en las casillas sin disparar
+        // SecurityOption_Changed (evitaría una reconstrucción redundante del catálogo:
+        // RebuildCatalogWithCurrentSecurityOptions ya se llamó justo antes en ApplyProfile).
+        KeepDefenderCheckBox.Checked -= SecurityOption_Changed;
+        KeepDefenderCheckBox.Unchecked -= SecurityOption_Changed;
+        KeepWindowsUpdateCheckBox.Checked -= SecurityOption_Changed;
+        KeepWindowsUpdateCheckBox.Unchecked -= SecurityOption_Changed;
+
+        KeepDefenderCheckBox.IsChecked = _currentSecurityOptions.KeepDefender;
+        KeepWindowsUpdateCheckBox.IsChecked = _currentSecurityOptions.KeepWindowsUpdate;
+        DefenderWarningText.Visibility = _currentSecurityOptions.KeepDefender ? Visibility.Collapsed : Visibility.Visible;
+        WindowsUpdateWarningText.Visibility = _currentSecurityOptions.KeepWindowsUpdate ? Visibility.Collapsed : Visibility.Visible;
+
+        KeepDefenderCheckBox.Checked += SecurityOption_Changed;
+        KeepDefenderCheckBox.Unchecked += SecurityOption_Changed;
+        KeepWindowsUpdateCheckBox.Checked += SecurityOption_Changed;
+        KeepWindowsUpdateCheckBox.Unchecked += SecurityOption_Changed;
+    }
+
+    /// <summary>
+    /// P13: el usuario cambia si Limpio/Personalizado mantienen Defender/Windows
+    /// Update. Nunca ejecuta ninguna acción sobre Windows ni sobre la imagen: solo
+    /// cambia <see cref="_currentSecurityOptions"/> y reconstruye el catálogo en
+    /// memoria (protección), para que el plan refleje el cambio.
+    /// </summary>
+    private void SecurityOption_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_activeCatalogProfileId is null || _profileLoadResult is null)
+            return;
+
+        var profile = _profileService.GetProfile(_profileLoadResult, _activeCatalogProfileId);
+        if (profile is null || profile.IsSecurityLocked)
+            return; // defensa en profundidad: estas casillas no deberían ni mostrarse aquí.
+
+        _currentSecurityOptions = new CatalogSecurityOptions
+        {
+            KeepDefender = KeepDefenderCheckBox.IsChecked == true,
+            KeepWindowsUpdate = KeepWindowsUpdateCheckBox.IsChecked == true,
+        };
+
+        DefenderWarningText.Visibility = _currentSecurityOptions.KeepDefender ? Visibility.Collapsed : Visibility.Visible;
+        WindowsUpdateWarningText.Visibility = _currentSecurityOptions.KeepWindowsUpdate ? Visibility.Collapsed : Visibility.Visible;
+
+        _logger.Info($"[PROFILES] Opciones de seguridad de '{profile.Id}' actualizadas: " +
+                     $"KeepDefender={_currentSecurityOptions.KeepDefender}, KeepWindowsUpdate={_currentSecurityOptions.KeepWindowsUpdate}.");
+
+        RebuildCatalogWithCurrentSecurityOptions();
     }
 
     /// <summary>
