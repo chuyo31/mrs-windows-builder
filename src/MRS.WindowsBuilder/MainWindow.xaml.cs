@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using Microsoft.Win32;
 using MRS.ComponentCatalog;
@@ -582,12 +583,19 @@ public partial class MainWindow : Window
         _executionUiUnlocked = false;
         _logger.Entry += OnExecutionLogEntry;
 
+        // System.Progress<T> reenvía cada Report() al SynchronizationContext
+        // capturado aquí (el de la UI), así que OnExecutionProgress se ejecuta
+        // siempre en el hilo de la ventana sin bloquearlo. RemovalEngine y
+        // WorkingImageFactory no conocen WPF: solo ven un IProgress<ProgressInfo>.
+        IProgress<ProgressInfo> progress = new Progress<ProgressInfo>(OnExecutionProgress);
+
         WorkingImage? workingImage = null;
 
         try
         {
             ExecutionStatusText.Text = "Preparando imagen...";
             _logger.Info("Preparando imagen...");
+            progress.Report(ProgressInfo.Create("Preparación / validación", 0, "Montando la ISO para localizar la imagen..."));
 
             string wimPath;
             await using (var isoMount = await _isoMounter.MountAsync(isoPath, _executionCts.Token))
@@ -596,11 +604,11 @@ public partial class MainWindow : Window
                     ?? throw new FileNotFoundException(@"La ISO no contiene sources\install.wim ni sources\install.esd.");
 
                 ExecutionStatusText.Text = "Creando imagen de trabajo...";
-                workingImage = await _workingImageFactory.CreateAsync(wimPath, index, workspaceRoot: null, _executionCts.Token);
+                workingImage = await _workingImageFactory.CreateAsync(wimPath, index, workspaceRoot: null, _executionCts.Token, progress);
             }
 
             ExecutionStatusText.Text = "Montando imagen...";
-            var result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token);
+            var result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token, progress);
 
             ReconcileExecutionRows(result);
 
@@ -703,7 +711,11 @@ public partial class MainWindow : Window
             .ToList();
 
         ExecutionStatusText.Text = "Preparando imagen...";
-        ExecutionProgressText.Text = $"0 / {_executionRows.Count}";
+        ExecutionProgressText.Text = $"0 / {_executionRows.Count} acciones";
+        ExecutionStageText.Text = "Etapa: --";
+        ExecutionPercentText.Text = "0%";
+        ExecutionProgressBar.Value = 0;
+        ExecutionTerminal.Document.Blocks.Clear();
         ExecutionCancelButton.IsEnabled = true;
         ExecutionCloseButton.IsEnabled = false;
         RefreshExecutionList();
@@ -711,6 +723,47 @@ public partial class MainWindow : Window
         PlanOverlay.Visibility = Visibility.Collapsed;
         ExecutionOverlay.Visibility = Visibility.Visible;
         StatusText.Text = "Aplicando cambios...";
+    }
+
+    /// <summary>
+    /// Único punto de entrada de la telemetría de progreso hacia la UI: actualiza
+    /// la barra/porcentaje/etapa/mensaje y añade una línea al terminal. No
+    /// contiene ninguna lógica de negocio; solo presentación.
+    /// </summary>
+    private void OnExecutionProgress(ProgressInfo info)
+    {
+        ExecutionProgressBar.Value = info.Percent;
+        ExecutionPercentText.Text = $"{info.Percent}%";
+        ExecutionStageText.Text = $"Etapa: {info.Stage}";
+        ExecutionStatusText.Text = info.Message;
+        AppendTerminalLine(info);
+    }
+
+    private void AppendTerminalLine(ProgressInfo info)
+    {
+        var color = info.Level switch
+        {
+            ProgressLevel.Success => Brushes.LightGreen,
+            ProgressLevel.Warning => Brushes.Khaki,
+            ProgressLevel.Error => Brushes.IndianRed,
+            _ => new SolidColorBrush(Color.FromRgb(0xB6, 0xF5, 0xC8)),
+        };
+
+        var source = info.Level switch
+        {
+            ProgressLevel.Success => "OK    ",
+            ProgressLevel.Warning => "WARN  ",
+            ProgressLevel.Error => "ERROR ",
+            _ when info.Message.StartsWith("DISM:", StringComparison.OrdinalIgnoreCase) => "DISM  ",
+            _ when info.Message.Contains("eliminado", StringComparison.OrdinalIgnoreCase) => "REMOVE",
+            _ => "MRS   ",
+        };
+
+        var line = $"[{info.Timestamp:HH:mm:ss}] {source} {info.Message}";
+        var paragraph = new Paragraph(new Run(line) { Foreground = color }) { Margin = new Thickness(0, 0, 0, 2) };
+
+        ExecutionTerminal.Document.Blocks.Add(paragraph);
+        ExecutionTerminal.ScrollToEnd();
     }
 
     private void OnExecutionLogEntry(object? sender, LogEntry entry)

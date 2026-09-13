@@ -12,6 +12,12 @@ namespace MRS.RemovalEngine;
 /// </summary>
 public interface IRemovalEngine
 {
+    /// <summary>
+    /// <paramref name="progress"/> es puramente informativo (etapa/porcentaje/
+    /// mensaje/nivel); es opcional y nunca condiciona el resultado de la
+    /// operación. No acopla esta capa a ninguna UI concreta.
+    /// </summary>
     Task<RemovalExecutionResult> ExecuteAsync(
-        WorkingImage image, RemovalPlan plan, CancellationToken cancellationToken = default);
+        WorkingImage image, RemovalPlan plan, CancellationToken cancellationToken = default,
+        IProgress<ProgressInfo>? progress = null);
 }

@@ -52,7 +52,7 @@ de bibliotecas siguen siendo **stubs**.
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09)
+## Estado actual — P7 (+ correcciones P08/P09, telemetría P10)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -105,6 +105,17 @@ diagnóstico. Se añadió además logging estructurado
 (OperationId/WorkspaceId/SourceWimPath/WorkingWimPath/MountDir) y una guarda
 en `RemovalEngine` que aborta si una imagen de trabajo mezclara rutas de dos
 workspaces distintos.
+
+**P10** — telemetría de progreso y terminal de ejecución (ver
+[`prompts/10-resultado.md`](prompts/10-resultado.md)). `WorkingImageFactory`
+y `RemovalEngine` reportan ahora un `ProgressInfo` (Stage/Percent/Message/
+Level/Timestamp) a través de un `IProgress<ProgressInfo>` opcional, sin
+ninguna dependencia de WPF (probado con un `IProgress<T>` de test, sin UI).
+La pantalla de ejecución (renombrada "CREANDO IMAGEN") muestra ahora barra
+de progreso, etapa y porcentaje actuales, y un terminal en tiempo real
+(`RichTextBox` seleccionable/copiable) con una línea por evento, coloreada
+por nivel. No se modificó el ciclo Mount→Execute→Verify→Commit/Discard ni
+el desbloqueo idempotente de P08/P09.
 
 **Todavía NO hace:**
 
@@ -165,5 +176,8 @@ app-packs/  docs/  profiles/   (reservados, vacíos)
 - [x] **P5** – `MRS.ComponentCatalog`: clasificación por categorías, protección de componentes críticos con motivo, dependencias, búsqueda/filtros y pantalla COMPONENTES. Sin eliminar nada todavía.
 - [x] **P6** – `MRS.RemovalPlanning`: RemovalPlan verificable (protección, estados, dependencias/dependientes, validador, serialización JSON) y pantalla PLAN DE MODIFICACIÓN. Sigue sin modificar el WIM.
 - [x] **P7** – `MRS.RemovalEngine`: copia de trabajo (Export-Image), montaje ReadWrite, ejecución ordenada con abort/discard transaccional, commit y verificación por reinventario. La ISO original nunca se modifica.
-- [ ] **P8** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom (selección automática sobre el catálogo).
-- [ ] **P9** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.
+- [x] **P08** – corrección: la UI de ejecución se desbloquea de forma idempotente en cuanto el motor termina, sin esperar al reinventario posterior.
+- [x] **P09** – corrección: auditoría y saneado del ciclo de vida workspace/mount (no se borra un workspace sin confirmar el desmontaje).
+- [x] **P10** – telemetría de progreso (`ProgressInfo`/`IProgress<T>`, sin WPF) + pantalla "CREANDO IMAGEN" con barra de progreso y terminal en tiempo real.
+- [ ] **P11** – `MRS.ProfileEngine`: perfiles Normal/Light/Medium/Ultra/Custom (selección automática sobre el catálogo).
+- [ ] **P12** – `MRS.PostInstall` + `MRS.ISOEngine`: tweaks, post-instalación y regeneración de la ISO final.

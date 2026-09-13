@@ -449,6 +449,17 @@
             <Setter Property="RowStyle" Value="{StaticResource DarkDataGridRow}"/>
         </Style>
 
+        <!-- ============ Barra de progreso (tema oscuro) ============ -->
+        <Style x:Key="DarkProgressBar" TargetType="ProgressBar">
+            <Setter Property="Minimum" Value="0"/>
+            <Setter Property="Maximum" Value="100"/>
+            <Setter Property="Height" Value="10"/>
+            <Setter Property="Background" Value="{StaticResource FieldBackground}"/>
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
     </Window.Resources>
 
     <Grid>
@@ -894,29 +905,62 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Text="APLICANDO CAMBIOS" Foreground="{StaticResource TextPrimary}"
+                <TextBlock Grid.Row="0" Text="CREANDO IMAGEN" Foreground="{StaticResource TextPrimary}"
                            FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4"/>
 
                 <StackPanel Grid.Row="1" Margin="0,14,0,12">
-                    <TextBlock x:Name="ExecutionStatusText" Text="Preparando imagen..."
-                               Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
-                    <TextBlock x:Name="ExecutionProgressText" Text="0 / 0" Margin="0,4,0,0"
-                               Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                    <Grid Margin="0,0,0,8">
+                        <TextBlock x:Name="ExecutionStageText" Text="Etapa: --"
+                                   Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="ExecutionPercentText" Text="0%" HorizontalAlignment="Right"
+                                   Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                    </Grid>
+                    <ProgressBar x:Name="ExecutionProgressBar" Style="{StaticResource DarkProgressBar}" Value="0"/>
+                    <TextBlock x:Name="ExecutionStatusText" Text="Preparando imagen..." Margin="0,8,0,0"
+                               Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ExecutionProgressText" Text="0 / 0 acciones" Margin="0,2,0,0"
+                               Foreground="{StaticResource TextSecondary}" FontSize="11"/>
                 </StackPanel>
 
-                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="ExecutionList">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,10">
-                                        <TextBlock Text="{Binding Label}" FontSize="13" Foreground="{StaticResource TextPrimary}"/>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Border>
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="260" MinWidth="200"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="ExecutionList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="16,10">
+                                            <TextBlock Text="{Binding Label}" FontSize="13" Foreground="{StaticResource TextPrimary}"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+
+                    <!-- Terminal: hace scroll automático, conserva todos los mensajes,
+                         distingue Info/Success/Warning/Error por color y permite
+                         seleccionar/copiar texto (RichTextBox de solo lectura). -->
+                    <Border Grid.Column="1" Margin="10,0,0,0" CornerRadius="12" Background="#FF000000"
+                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="Terminal" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" FontWeight="SemiBold" Margin="16,10,16,6"/>
+                            <RichTextBox x:Name="ExecutionTerminal" Grid.Row="1" IsReadOnly="True"
+                                         Background="Transparent" BorderThickness="0" Foreground="#FFB6F5C8"
+                                         FontFamily="Consolas, Segoe UI" FontSize="12" Padding="16,0,16,10"
+                                         VerticalScrollBarVisibility="Auto" IsDocumentEnabled="True"/>
+                        </Grid>
+                    </Border>
+                </Grid>
 
                 <Grid Grid.Row="3" Margin="0,16,0,0">
                     <Button x:Name="ExecutionCancelButton" Content="Cancelar" HorizontalAlignment="Left"

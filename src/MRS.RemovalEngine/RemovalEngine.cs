@@ -38,10 +38,17 @@ public sealed class RemovalEngine : IRemovalEngine
     }
 
     public async Task<RemovalExecutionResult> ExecuteAsync(
-        WorkingImage image, RemovalPlan plan, CancellationToken cancellationToken = default)
+        WorkingImage image, RemovalPlan plan, CancellationToken cancellationToken = default,
+        IProgress<ProgressInfo>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(image);
         ArgumentNullException.ThrowIfNull(plan);
+
+        const string mountingStage = "Montaje";
+        const string executingStage = "Aplicación de eliminaciones";
+        const string validatingStage = "Validación";
+        const string committingStage = "Commit";
+        const string finalizingStage = "Finalización / desmontaje";
 
         var executed = new List<RemovalExecutionItem>();
         var failed = new List<RemovalExecutionItem>();
@@ -51,6 +58,7 @@ public sealed class RemovalEngine : IRemovalEngine
         // ---- 1) PRE-FLIGHT ------------------------------------------------
 
         LogContext("preflight-inicio", image);
+        progress?.Report(ProgressInfo.Create(mountingStage, 25, "Validando imagen de trabajo..."));
 
         if (!image.HasConsistentWorkspace())
         {
@@ -61,18 +69,21 @@ public sealed class RemovalEngine : IRemovalEngine
                 $"La imagen de trabajo mezcla rutas de workspaces distintos " +
                 $"(WorkspaceId esperado: {image.WorkspaceId}; MountPath: {image.MountPath}; WorkingWimPath: {image.WorkingWimPath}).");
             _logger.Error($"[WORKSPACE] Contexto inconsistente detectado. {DescribeContext(image)}");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "Contexto de workspace inconsistente.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
         if (!plan.IsValid)
         {
             errors.Add("El RemovalPlan no es válido (contiene errores de construcción).");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "El plan de eliminación no es válido.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
         if (!File.Exists(image.WorkingWimPath))
         {
             errors.Add("No existe la imagen de trabajo (WorkingWim).");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "No existe la imagen de trabajo.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
@@ -80,12 +91,14 @@ public sealed class RemovalEngine : IRemovalEngine
         if (!indexCheck.Succeeded)
         {
             errors.Add($"El índice {image.Index} no existe en la imagen de trabajo.");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "El índice indicado no existe en la imagen.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
         if (!HasEnoughFreeSpace(image.WorkspacePath))
         {
             errors.Add("Espacio en disco insuficiente para continuar.");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "Espacio en disco insuficiente.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
@@ -94,28 +107,40 @@ public sealed class RemovalEngine : IRemovalEngine
         if (cancellationToken.IsCancellationRequested)
         {
             warnings.Add("Operación cancelada. La imagen de trabajo no ha sido modificada.");
+            progress?.Report(ProgressInfo.Create(mountingStage, 25, "Operación cancelada.", ProgressLevel.Warning));
             return BuildResult(RemovalExecutionPhase.Cancelled, false, image, executed, failed, warnings, errors, false, false);
         }
 
         // ---- 2) MONTAJE READWRITE -----------------------------------------
 
         _logger.Info($"Montando imagen de trabajo (índice {image.Index}, lectura/escritura)...");
+        progress?.Report(ProgressInfo.Create(mountingStage, 28, "DISM: Mount-Wim iniciado"));
         var mount = await _dism.MountWimAsync(image.WorkingWimPath, image.Index, image.MountPath, readOnly: false, cancellationToken).ConfigureAwait(false);
         if (!mount.Succeeded)
         {
             errors.Add($"No se pudo montar la imagen de trabajo. ExitCode: {mount.ExitCode}");
+            progress?.Report(ProgressInfo.Create(mountingStage, 28,
+                $"DISM: Mount-Wim falló (ExitCode {mount.ExitCode})", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.Mounting, false, image, executed, failed, warnings, errors, false, false);
         }
         image.IsMounted = true;
         LogContext("montada", image);
+        progress?.Report(ProgressInfo.Create(mountingStage, 35, "Imagen montada", ProgressLevel.Success));
 
         // ---- 3) EJECUCIÓN (AppX -> Features -> Capabilities -> Packages) -
 
         var itemsById = plan.Components.ToDictionary(i => i.ComponentId, StringComparer.Ordinal);
+        var orderedActions = OrderActions(plan.Actions).ToList();
         var cancelled = false;
+        var actionIndex = 0;
 
-        foreach (var action in OrderActions(plan.Actions))
+        foreach (var action in orderedActions)
         {
+            actionIndex++;
+            // 35-75%: se reparte de forma aproximada entre las acciones; no se
+            // finge un progreso interno de DISM que no podemos conocer.
+            var actionPercent = orderedActions.Count == 0 ? 75 : 35 + actionIndex * 40 / orderedActions.Count;
+
             if (cancellationToken.IsCancellationRequested)
             {
                 cancelled = true;
@@ -138,6 +163,7 @@ public sealed class RemovalEngine : IRemovalEngine
                 errors.Add(blockReason);
                 _logger.Error($"[REMOVAL] ERROR: {blockReason}");
                 _logger.Error("[REMOVAL] Abortando ejecución.");
+                progress?.Report(ProgressInfo.Create(executingStage, actionPercent, blockReason, ProgressLevel.Error));
                 break;
             }
 
@@ -145,6 +171,7 @@ public sealed class RemovalEngine : IRemovalEngine
             _logger.Info($"[REMOVAL] Inicio: {displayName}");
             _logger.Info($"[REMOVAL] Action: {action.ActionType}");
             LogContext($"ejecutando:{action.ComponentId}", image);
+            progress?.Report(ProgressInfo.Create(executingStage, actionPercent, $"DISM: {action.ActionType} {displayName}"));
 
             var startedAt = DateTimeOffset.UtcNow;
             ProcessRunResult result;
@@ -175,6 +202,7 @@ public sealed class RemovalEngine : IRemovalEngine
             {
                 executed.Add(item);
                 _logger.Info($"[REMOVAL] {displayName} eliminado correctamente.");
+                progress?.Report(ProgressInfo.Create(executingStage, actionPercent, $"{displayName} eliminado correctamente", ProgressLevel.Success));
             }
             else
             {
@@ -183,6 +211,8 @@ public sealed class RemovalEngine : IRemovalEngine
                 _logger.Error($"[REMOVAL] ERROR: {displayName} falló.");
                 _logger.Error($"[DISM] ExitCode={result.ExitCode}");
                 _logger.Error("[REMOVAL] Abortando ejecución.");
+                progress?.Report(ProgressInfo.Create(executingStage, actionPercent,
+                    $"DISM: {displayName} falló (ExitCode {result.ExitCode})", ProgressLevel.Error));
                 break; // Parte 19: el primer error aborta; nunca reintentos destructivos.
             }
         }
@@ -192,19 +222,27 @@ public sealed class RemovalEngine : IRemovalEngine
         if (cancelled)
         {
             warnings.Add("Operación cancelada. La imagen de trabajo no ha sido modificada.");
+            progress?.Report(ProgressInfo.Create(finalizingStage, 90, "Cancelado: descartando cambios...", ProgressLevel.Warning));
             await DiscardAsync(image).ConfigureAwait(false);
+            progress?.Report(ProgressInfo.Create(finalizingStage, 100,
+                "Operación cancelada. La imagen de trabajo no ha sido modificada.", ProgressLevel.Warning));
             return BuildResult(RemovalExecutionPhase.Cancelled, false, image, executed, failed, warnings, errors, false, true);
         }
 
         if (failed.Count > 0)
         {
             _logger.Info("[REMOVAL] Descartando imagen.");
+            progress?.Report(ProgressInfo.Create(finalizingStage, 90, "Descartando cambios tras el error...", ProgressLevel.Warning));
             await DiscardAsync(image).ConfigureAwait(false);
+            progress?.Report(ProgressInfo.Create(finalizingStage, 100, "No se han podido aplicar los cambios.", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.Failed, false, image, executed, failed, warnings, errors, false, true);
         }
 
+        progress?.Report(ProgressInfo.Create(validatingStage, 78, "Acciones completadas; preparando confirmación..."));
+
         _logger.Info("Confirmando cambios (commit)...");
         LogContext("commit-inicio", image);
+        progress?.Report(ProgressInfo.Create(committingStage, 85, "DISM: Unmount-Wim /Commit iniciado"));
         var commit = await _dism.UnmountWimCommitAsync(image.MountPath, cancellationToken).ConfigureAwait(false);
         image.IsMounted = false;
 
@@ -220,18 +258,25 @@ public sealed class RemovalEngine : IRemovalEngine
                 _logger.Warn($"El commit devolvió ExitCode {commit.ExitCode}, pero la imagen ya no aparece montada; se considera confirmada.");
                 image.IsCommitted = true;
                 _logger.Info("[REMOVAL] Cambios aplicados y confirmados correctamente.");
+                progress?.Report(ProgressInfo.Create(finalizingStage, 100, "Imagen finalizada correctamente", ProgressLevel.Success));
                 return BuildResult(RemovalExecutionPhase.Completed, true, image, executed, failed, warnings, errors, true, false);
             }
 
             errors.Add($"No se pudo confirmar (commit) la imagen. ExitCode: {commit.ExitCode}");
             _logger.Error($"[REMOVAL] ERROR: commit falló. ExitCode={commit.ExitCode}");
+            progress?.Report(ProgressInfo.Create(committingStage, 85,
+                $"DISM: Commit falló (ExitCode {commit.ExitCode})", ProgressLevel.Error));
             return BuildResult(RemovalExecutionPhase.Failed, false, image, executed, failed, warnings, errors, false, false);
         }
 
         image.IsCommitted = true;
         LogContext("commit-confirmado", image);
+        progress?.Report(ProgressInfo.Create(committingStage, 95, "Commit confirmado", ProgressLevel.Success));
+
+        progress?.Report(ProgressInfo.Create(finalizingStage, 97, "Verificando que no quedan montajes abiertos..."));
         await VerifyNoMountsRemainAsync(image.MountPath).ConfigureAwait(false);
         _logger.Info("[REMOVAL] Cambios aplicados y confirmados correctamente.");
+        progress?.Report(ProgressInfo.Create(finalizingStage, 100, "Imagen finalizada correctamente", ProgressLevel.Success));
 
         return BuildResult(RemovalExecutionPhase.Completed, true, image, executed, failed, warnings, errors, true, false);
     }

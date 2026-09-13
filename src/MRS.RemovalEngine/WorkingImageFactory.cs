@@ -27,8 +27,11 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
 
     public async Task<WorkingImage> CreateAsync(
         string sourceWimPath, int sourceIndex, string? workspaceRoot = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, IProgress<ProgressInfo>? progress = null)
     {
+        const string preparingStage = "Preparación / validación";
+        const string exportingStage = "Exportación de la imagen de trabajo";
+
         if (string.IsNullOrWhiteSpace(sourceWimPath) || !File.Exists(sourceWimPath))
             throw new FileNotFoundException("La imagen origen no existe.", sourceWimPath);
 
@@ -36,6 +39,7 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
             throw new RemovalEngineException(-1, "Índice de edición inválido.");
 
         _logger.Info("Creando workspace...");
+        progress?.Report(ProgressInfo.Create(preparingStage, 2, "Creando workspace..."));
         var workspace = InventoryWorkspace.CreateNew(workspaceRoot);
         var destination = Path.Combine(workspace.SourcePath, "install.wim");
 
@@ -44,9 +48,11 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
             $"WorkspaceId={workspace.WorkspaceId} SourceWimPath={sourceWimPath} " +
             $"WorkingWimPath={destination} MountDir={workspace.MountPath}");
 
+        progress?.Report(ProgressInfo.Create(preparingStage, 8, "Comprobando espacio en disco..."));
         EnsureEnoughFreeSpace(sourceWimPath, workspace.RootPath);
 
         _logger.Info($"Creando imagen de trabajo (copia independiente del índice {sourceIndex})...");
+        progress?.Report(ProgressInfo.Create(exportingStage, 10, "DISM: Export-Image iniciado"));
         var export = await _dism
             .ExportImageAsync(sourceWimPath, sourceIndex, destination, destinationName: null, cancellationToken)
             .ConfigureAwait(false);
@@ -54,10 +60,13 @@ public sealed class WorkingImageFactory : IWorkingImageFactory
         if (!export.Succeeded)
         {
             _logger.Error($"No se pudo crear la imagen de trabajo. ExitCode: {export.ExitCode}");
+            progress?.Report(ProgressInfo.Create(exportingStage, 10,
+                $"DISM: Export-Image falló (ExitCode {export.ExitCode})", ProgressLevel.Error));
             throw new RemovalEngineException(export.ExitCode, "No se pudo crear la imagen de trabajo (Export-Image).");
         }
 
         _logger.Info("Imagen de trabajo creada. La imagen original permanece intacta.");
+        progress?.Report(ProgressInfo.Create(exportingStage, 25, "DISM: Export-Image completado", ProgressLevel.Success));
 
         var image = new WorkingImage
         {

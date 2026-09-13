@@ -9,7 +9,12 @@ namespace MRS.RemovalEngine;
 /// </summary>
 public interface IWorkingImageFactory
 {
+    /// <summary>
+    /// <paramref name="progress"/> es puramente informativo (etapa/porcentaje/
+    /// mensaje/nivel); es opcional y nunca condiciona el resultado de la
+    /// operación. No acopla esta capa a ninguna UI concreta.
+    /// </summary>
     Task<WorkingImage> CreateAsync(
         string sourceWimPath, int sourceIndex, string? workspaceRoot = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, IProgress<ProgressInfo>? progress = null);
 }
