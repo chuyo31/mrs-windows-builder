@@ -57,7 +57,7 @@ no genera ninguna ISO final (ver P15/P16). `MRS.PostInstall` sigue siendo un
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -200,6 +200,20 @@ con 71 tests (DISM/registro simulados, nunca por texto de salida); la prueba
 real sobre un `boot.wim` de la ISO objetivo queda pendiente y documentada
 como tal, sin resultados inventados.
 
+**P17** — intento de validar P16 con una ISO real (ver
+[`prompts/17-resultado.md`](prompts/17-resultado.md)): **bloqueado por
+completo**. DISM exige privilegios elevados incluso para una consulta de
+solo lectura (`Get-WimInfo`/`Get-WindowsImage`, no solo `Mount-Wim`), y esta
+sesión no está elevada. Siguiendo la instrucción explícita del prompt de no
+interpretar ese error como un fallo de implementación, se abortó antes de
+tocar nada y **no se modificó ningún código**. Sí se pudo, sin DISM ni
+elevación, montar una ISO real de solo lectura (`Mount-DiskImage`) y
+registrar el hash SHA256 de su `boot.wim` para una verificación de
+integridad futura, y confirmar (con la suite de tests, sin necesitar
+elevación) que el bloqueo del bypass de almacenamiento sigue funcionando.
+Deja documentados los pasos exactos que faltan para completar la
+validación real desde una sesión elevada.
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
@@ -278,4 +292,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P14** – corrección: "OPCIONES AVANZADAS" ahora también aparece en la pantalla inicial al elegir Limpio/Personalizado (antes solo vivía en COMPONENTES); una única fuente de verdad (`_currentSecurityOptions`) sincroniza ambas pantallas, y la configuración se conserva al pulsar "Continuar" (ver `prompts/14-resultado.md`).
 - [x] **P15** – `MRS.InstallationOptions` (cuenta local/OOBE sin conexión/bypass de TPM-SecureBoot-CPU-RAM-almacenamiento) + preparación de `MRS.ISOEngine` (workspace de generación, planificador, validación). Investigación de mecanismos documentada; sin ejecución real sobre `boot.wim` todavía (ver `prompts/15-resultado.md`).
 - [x] **P16** – implementación real de P15 sobre una copia de `boot.wim`: `LabConfigApplier`, `AutounattendGenerator`, `BootWimModifier`/`InstallationImageService` (ciclo Mount→hive→aplicar→verificar→Commit/Discard). Bypass de almacenamiento sigue sin implementar; OOBE sin conexión implementado pero no confirmado en la build real (sin sesión elevada disponible). Ver `prompts/16-resultado.md`.
-- [ ] **P17** – `MRS.PostInstall`: tweaks/post-instalación, confirmación real de P16 sobre la ISO objetivo (con sesión elevada), y regeneración de la ISO final (`oscdimg`).
+- [ ] **P17** – intento de validación real de P16 sobre una ISO real: bloqueado por completo (DISM exige elevación incluso para consultas de solo lectura; esta sesión no está elevada). Sin cambios de código; documentado con transparencia junto con los pasos exactos que faltan para completarla. Ver `prompts/17-resultado.md`.
+- [ ] **P18** – `MRS.PostInstall`: tweaks/post-instalación, confirmación real de P16/P17 sobre la ISO objetivo (con sesión elevada), y regeneración de la ISO final (`oscdimg`).
