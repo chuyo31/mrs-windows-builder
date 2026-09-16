@@ -941,6 +941,16 @@ public partial class MainWindow : Window
     /// </summary>
     private void InstallationOption_Changed(object sender, RoutedEventArgs e)
     {
+        // Varias casillas fijan IsChecked="True" directamente en el XAML, lo que
+        // dispara este evento durante InitializeComponent(), antes de que los
+        // demás CheckBox con x:Name de este panel estén conectados a sus campos
+        // (siguen siendo null en ese momento) -> NullReferenceException. La
+        // ventana (this) no queda IsInitialized hasta que EndInit() se completa
+        // al final de InitializeComponent(), así que basta con salir aquí; una
+        // vez inicializada la ventana, el comportamiento es el de siempre.
+        if (!IsInitialized)
+            return;
+
         _installationOptions = _installationOptions with
         {
             AllowLocalAccount = AllowLocalAccountCheckBox.IsChecked == true,
