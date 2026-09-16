@@ -35,7 +35,7 @@ varias bibliotecas de motor:
 | Proyecto | Framework | Rol |
 |---|---|---|
 | `MRS.WindowsBuilder` | `net8.0-windows` (WPF) | Aplicación de escritorio y UI. |
-| `MRS.ISOEngine` | `net8.0` | Workspace de generación, planificación/validación, y aplicación real de LabConfig/autounattend.xml sobre una copia de `boot.wim` (P16). Todavía no genera la ISO final (`oscdimg`). |
+| `MRS.ISOEngine` | `net8.0` | Pipeline completo de generación (P19): une análisis/RemovalPlan/RemovalEngine/InstallationOptions/boot.wim/PostInstall y genera la ISO final con `oscdimg`. Ejecución real pendiente de sesión elevada + Windows ADK. |
 | `MRS.ImageEngine` | `net8.0` | Lectura de metadatos de la imagen (WIM/ESD), ediciones. |
 | `MRS.DismEngine` | `net8.0` | Operaciones DISM sobre la imagen montada. |
 | `MRS.ComponentCatalog` | `net8.0` | Catálogo de componentes: clasificación, protección y dependencias. |
@@ -43,7 +43,7 @@ varias bibliotecas de motor:
 | `MRS.RemovalEngine` | `net8.0` | Ejecuta el RemovalPlan sobre una copia de trabajo (Export/Mount/DISM/Commit-Discard). |
 | `MRS.ProfileEngine` | `net8.0` | Perfiles de eliminación en JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): producen una selección de ComponentId, nunca ejecutan nada. |
 | `MRS.InstallationOptions` | `net8.0` | Configuración del instalador/OOBE de la ISO final (cuenta local, OOBE sin conexión, bypass de hardware). Independiente del catálogo de componentes. |
-| `MRS.PostInstall` | `net8.0` | Empaqueta .NET Desktop Runtime + PCPI y genera `SetupComplete.cmd` (P18). No genera la ISO ni se integra todavía con ISOEngine. |
+| `MRS.PostInstall` | `net8.0` | Empaqueta .NET Desktop Runtime + PCPI y genera `SetupComplete.cmd` (P18). Integrado en el pipeline de ISOEngine desde P19. |
 
 `MRS.DismEngine`, `MRS.ImageEngine`, `MRS.ComponentCatalog`,
 `MRS.RemovalPlanning`, `MRS.RemovalEngine`, `MRS.ProfileEngine`,
@@ -58,7 +58,7 @@ al workspace (ver P15/P16/P18).
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada, PostInstall P18)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada, PostInstall P18, pipeline P19)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -231,15 +231,32 @@ reales queda pendiente; todo lo demás (empaquetado, orden, determinismo,
 ausencia de rutas del desarrollador) está validado con 44 tests. No genera
 ninguna ISO ni se integra todavía con `MRS.ISOEngine` (solo se deja la API).
 
+**P19** — pipeline completo de generación de ISO (ver
+[`prompts/19-resultado.md`](prompts/19-resultado.md)). `IsoGenerationPipeline`
+une, sin reescribirlas, todas las piezas anteriores: valida la solicitud
+(reutiliza los validadores de P15/P16/P18), crea el workspace, copia el
+**árbol completo** de la ISO original (`IsoTreeCopier`, nuevo — la pieza que
+faltaba: `bootmgr`/`boot\`/`efi\`, no solo los WIM sueltos, para que la ISO
+resultante pueda arrancar en BIOS y UEFI), aplica LabConfig/autounattend.xml
+sobre `boot.wim` (P16), exporta la edición Pro y aplica el `RemovalPlan` ya
+construido sobre `install.wim` (P07 — nunca decide qué eliminar), integra el
+paquete de PostInstall en `sources\$OEM$\` (P18), valida el resultado, y
+genera la ISO final con `oscdimg` (`OscdimgRunner`, nuevo). No se pudo
+ejecutar de extremo a extremo contra una ISO real: DISM sigue exigiendo
+privilegios elevados (P17) y el Windows ADK (`oscdimg.exe`) no está
+instalado en este entorno — ambos bloqueos confirmados explícitamente, no
+asumidos. Validado con 25 tests nuevos (96 en total en `MRS.ISOEngine.Tests`)
+usando DISM/registro/oscdimg simulados.
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
-  solo configuración + planificación + UI + protección), confirmar P16
-  sobre un `boot.wim` real de la build objetivo (bloqueado por falta de
-  sesión elevada), activar automáticamente el bypass de OOBE sin conexión,
-  implementar el bypass de almacenamiento, `/Remove` de features, limpieza
-  de checkpoints/ResetBase, compresión, creación de la ISO final, copiar el
-  paquete PostInstall de P18 al workspace de generación, ni App Packs.
+  solo configuración + planificación + UI + protección), confirmar P16/P19
+  sobre una ISO real de la build objetivo con una sesión elevada y el
+  Windows ADK instalado, activar automáticamente el bypass de OOBE sin
+  conexión, implementar el bypass de almacenamiento, `/Remove` de features,
+  limpieza de checkpoints/ResetBase, compresión, optimizar el tamaño de la
+  ISO, ni App Packs.
 
 ---
 
@@ -273,7 +290,7 @@ src/
   MRS.RemovalEngine/      WorkingImageFactory, RemovalEngine, RemovalVerifier (Export/Mount RW/DISM/Commit-Discard), telemetría ProgressInfo
   MRS.ProfileEngine/      Perfiles JSON (Mínimo/Ligero/Recomendado/Limpio/Personalizado): solo producen una selección de ComponentId
   MRS.InstallationOptions/ Configuración de instalador/OOBE de la ISO final (cuenta local, OOBE offline, bypass de hardware)
-  MRS.ISOEngine/          Workspace de generación, planificador/validación, LabConfigApplier/AutounattendGenerator/BootWimModifier (P16)
+  MRS.ISOEngine/          IsoGenerationPipeline (P19): une Removal/InstallationOptions/PostInstall; IsoTreeCopier + OscdimgRunner (P19), LabConfigApplier/AutounattendGenerator/BootWimModifier (P16)
   MRS.PostInstall/        PostInstallPackageBuilder: empaqueta .NET Desktop Runtime + PCPI + SetupComplete.cmd (P18)
 tests/
   MRS.ImageEngine.Tests/          Tests xUnit (parsers, análisis, inventario, workspace)
@@ -282,7 +299,7 @@ tests/
   MRS.RemovalEngine.Tests/        Tests xUnit (ejecución transaccional, workspace, telemetría de progreso)
   MRS.ProfileEngine.Tests/        Tests xUnit (carga de JSON, validación, selección de ComponentId)
   MRS.InstallationOptions.Tests/  Tests xUnit (defaults, independencia de bypasses, serialización)
-  MRS.ISOEngine.Tests/            Tests xUnit (planificador, validación, LabConfig/autounattend/boot.wim con DISM/registro simulados)
+  MRS.ISOEngine.Tests/            Tests xUnit (pipeline completo, IsoTreeCopier, OscdimgRunner, planificador, validación, LabConfig/autounattend/boot.wim con DISM/registro/oscdimg simulados)
   MRS.PostInstall.Tests/          Tests xUnit (configuración, empaquetado, ejecución de comandos, orden .NET->PCPI, seguridad)
 prompts/                  Prompts de desarrollo y resultados por paso
 catalog/                  Reglas de clasificación/protección externas (win11/win10/shared)
@@ -312,4 +329,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [x] **P16** – implementación real de P15 sobre una copia de `boot.wim`: `LabConfigApplier`, `AutounattendGenerator`, `BootWimModifier`/`InstallationImageService` (ciclo Mount→hive→aplicar→verificar→Commit/Discard). Bypass de almacenamiento sigue sin implementar; OOBE sin conexión implementado pero no confirmado en la build real (sin sesión elevada disponible). Ver `prompts/16-resultado.md`.
 - [ ] **P17** – intento de validación real de P16 sobre una ISO real: bloqueado por completo (DISM exige elevación incluso para consultas de solo lectura; esta sesión no está elevada). Sin cambios de código; documentado con transparencia junto con los pasos exactos que faltan para completarla. Ver `prompts/17-resultado.md`.
 - [x] **P18** – `MRS.PostInstall`: `PostInstallPackageBuilder` empaqueta .NET Desktop Runtime 8.0.26 x64 + PCPI junto a un `SetupComplete.cmd` determinista (`$OEM$\$$\Setup\Scripts\`, contexto SYSTEM, una sola ejecución). Sin archivos reales exactos disponibles para probar; sin integración con ISOEngine todavía (solo la API). Ver `prompts/18-resultado.md`.
-- [ ] **P19** – confirmación real de P16/P17 sobre la ISO objetivo (con sesión elevada), integrar el paquete de P18 en el workspace de ISOEngine, y regeneración de la ISO final (`oscdimg`).
+- [x] **P19** – `IsoGenerationPipeline`: une análisis/RemovalPlan/RemovalEngine/InstallationOptions/boot.wim/PostInstall/oscdimg en un único flujo, sin reescribir ninguna pieza. Añade `IsoTreeCopier` (copia el árbol completo de la ISO, no solo los WIM sueltos) y `OscdimgRunner`. Ejecución real pendiente: sin sesión elevada ni Windows ADK en este entorno. Ver `prompts/19-resultado.md`.
+- [ ] **P20** – confirmación real de P16/P17/P19 sobre la ISO objetivo (con sesión elevada y Windows ADK instalado), integración en `MRS.WindowsBuilder`, y optimización de tamaño.

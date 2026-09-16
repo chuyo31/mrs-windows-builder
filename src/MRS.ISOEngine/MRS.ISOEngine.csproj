@@ -10,6 +10,13 @@
     <ProjectReference Include="..\MRS.InstallationOptions\MRS.InstallationOptions.csproj" />
     <ProjectReference Include="..\MRS.DismEngine\MRS.DismEngine.csproj" />
     <ProjectReference Include="..\MRS.ImageEngine\MRS.ImageEngine.csproj" />
+    <!-- P19: el pipeline de generación es el punto que une las piezas ya
+         construidas (RemovalPlan/RemovalEngine sobre install.wim, PostInstall).
+         Ninguno de estos tres referencia MRS.ISOEngine: sigue siendo una
+         dependencia de un único sentido. -->
+    <ProjectReference Include="..\MRS.RemovalPlanning\MRS.RemovalPlanning.csproj" />
+    <ProjectReference Include="..\MRS.RemovalEngine\MRS.RemovalEngine.csproj" />
+    <ProjectReference Include="..\MRS.PostInstall\MRS.PostInstall.csproj" />
   </ItemGroup>
 
 </Project>

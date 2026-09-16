@@ -20,7 +20,7 @@ namespace MRS.PostInstall.Packaging;
 /// Aborta (lanza <see cref="PostInstallException"/>) si la validación previa
 /// falla — nunca produce un paquete aparentemente completo pero incompleto.
 /// </summary>
-public sealed class PostInstallPackageBuilder
+public sealed class PostInstallPackageBuilder : IPostInstallPackageBuilder
 {
     private readonly IAppLogger _logger;
 
