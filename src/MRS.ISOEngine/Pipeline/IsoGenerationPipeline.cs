@@ -21,6 +21,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
     private readonly IRemovalEngine _removalEngine;
     private readonly IPostInstallPackageBuilder _postInstallPackageBuilder;
     private readonly IOscdimgRunner _oscdimgRunner;
+    private readonly IElevationChecker _elevationChecker;
     private readonly IAppLogger _logger;
 
     public IsoGenerationPipeline(
@@ -31,6 +32,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
         IRemovalEngine removalEngine,
         IPostInstallPackageBuilder postInstallPackageBuilder,
         IOscdimgRunner oscdimgRunner,
+        IElevationChecker? elevationChecker = null,
         IAppLogger? logger = null)
     {
         _treeCopier = treeCopier ?? throw new ArgumentNullException(nameof(treeCopier));
@@ -40,6 +42,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
         _removalEngine = removalEngine ?? throw new ArgumentNullException(nameof(removalEngine));
         _postInstallPackageBuilder = postInstallPackageBuilder ?? throw new ArgumentNullException(nameof(postInstallPackageBuilder));
         _oscdimgRunner = oscdimgRunner ?? throw new ArgumentNullException(nameof(oscdimgRunner));
+        _elevationChecker = elevationChecker ?? new ElevationChecker();
         _logger = logger ?? NullAppLogger.Instance;
     }
 
@@ -49,6 +52,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        const string environmentStage = "Comprobación de entorno";
         const string validatingStage = "Validación";
         const string workspaceStage = "Generation workspace";
         const string treeStage = "Preparando árbol de la ISO";
@@ -62,6 +66,23 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
         var appliedLines = new List<string>();
         var errors = new List<string>();
         GenerationWorkspace? workspace = null;
+
+        // P20, sección 1: comprobar el entorno ANTES que la propia solicitud.
+        // DISM exige privilegios de administrador incluso para lecturas, y
+        // oscdimg requiere el Windows ADK; sin ambos, ninguna fase real del
+        // pipeline puede completarse, así que se aborta aquí con los mensajes
+        // exactos exigidos en lugar de fallar de forma confusa a mitad de
+        // PrepareBootWim/PrepareInstallWim u oscdimg.
+        progress?.Report(InstallationProgressInfo.Create(environmentStage, 0, "Comprobando privilegios y Windows ADK..."));
+        var environment = EnvironmentPreflightChecker.Check(_elevationChecker, _oscdimgRunner);
+        if (!environment.IsReady)
+        {
+            var message = string.Join(" ", environment.Errors);
+            _logger.Error($"[PIPELINE] {message}");
+            progress?.Report(InstallationProgressInfo.Create(environmentStage, 0, message, InstallationProgressLevel.Error));
+            return new IsoGenerationResult(false, null, null, appliedLines, environment.Errors);
+        }
+        progress?.Report(InstallationProgressInfo.Create(environmentStage, 1, "Entorno listo (elevado, ADK disponible)", InstallationProgressLevel.Success));
 
         progress?.Report(InstallationProgressInfo.Create(validatingStage, 1, "Validando solicitud..."));
         var requestValidation = IsoGenerationRequestValidator.Validate(request);

@@ -58,7 +58,7 @@ al workspace (ver P15/P16/P18).
 
 ---
 
-## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17 bloqueada, PostInstall P18, pipeline P19)
+## Estado actual — P7 (+ correcciones P08/P09/P12/P14, telemetría P10, perfiles P11/P13, instalación P15/P16, validación P17/P20 bloqueada, PostInstall P18, pipeline P19)
 
 Primer `RemovalEngine` real, **probado con éxito sobre Windows 11 26H2 Pro**
 (Clipchamp eliminado, commit y desmontaje confirmados): aplica un
@@ -248,6 +248,24 @@ instalado en este entorno — ambos bloqueos confirmados explícitamente, no
 asumidos. Validado con 25 tests nuevos (96 en total en `MRS.ISOEngine.Tests`)
 usando DISM/registro/oscdimg simulados.
 
+**P20** — intento de primera generación real de ISO con el pipeline de P19
+(ver [`prompts/20-resultado.md`](prompts/20-resultado.md)): **bloqueado en
+la misma comprobación de entorno de P17**, esta vez confirmada de nuevo
+(no elevado, Windows ADK/`oscdimg.exe` no instalado), así que la
+generación real no llegó ni a iniciarse (`CopyIsoTree` en adelante nunca se
+ejecutó). Se añadió una corrección real descubierta al intentar la prueba:
+`IsoGenerationPipeline` ahora comprueba el entorno (`EnvironmentPreflightChecker`
++ `IElevationChecker`) como primer paso, con los dos mensajes exactos
+exigidos ("Se requieren privilegios de administrador para ejecutar DISM." /
+"Windows ADK/oscdimg no está instalado."), en vez de fallar de forma
+confusa varias fases después. Sí se localizó, sin necesitar elevación
+(`Mount-DiskImage`/`Get-FileHash`), una ISO real que coincide exactamente
+con la build preferida (26300.9278, x64, es-ES) y se registraron los
+hashes SHA256 de la ISO/boot.wim/install.wim para una verificación de
+integridad futura; también se localizaron, por primera vez, archivos
+reales de PostInstall con los nombres exactos requeridos. Validado con 6
+tests nuevos (417/417 en total, sin regresiones).
+
 **Todavía NO hace:**
 
 - Ejecutar de verdad la desactivación de Defender/Windows Update (P13 es
@@ -330,4 +348,5 @@ app-packs/  docs/         (reservados, vacíos)
 - [ ] **P17** – intento de validación real de P16 sobre una ISO real: bloqueado por completo (DISM exige elevación incluso para consultas de solo lectura; esta sesión no está elevada). Sin cambios de código; documentado con transparencia junto con los pasos exactos que faltan para completarla. Ver `prompts/17-resultado.md`.
 - [x] **P18** – `MRS.PostInstall`: `PostInstallPackageBuilder` empaqueta .NET Desktop Runtime 8.0.26 x64 + PCPI junto a un `SetupComplete.cmd` determinista (`$OEM$\$$\Setup\Scripts\`, contexto SYSTEM, una sola ejecución). Sin archivos reales exactos disponibles para probar; sin integración con ISOEngine todavía (solo la API). Ver `prompts/18-resultado.md`.
 - [x] **P19** – `IsoGenerationPipeline`: une análisis/RemovalPlan/RemovalEngine/InstallationOptions/boot.wim/PostInstall/oscdimg en un único flujo, sin reescribir ninguna pieza. Añade `IsoTreeCopier` (copia el árbol completo de la ISO, no solo los WIM sueltos) y `OscdimgRunner`. Ejecución real pendiente: sin sesión elevada ni Windows ADK en este entorno. Ver `prompts/19-resultado.md`.
-- [ ] **P20** – confirmación real de P16/P17/P19 sobre la ISO objetivo (con sesión elevada y Windows ADK instalado), integración en `MRS.WindowsBuilder`, y optimización de tamaño.
+- [ ] **P20** – primer intento de generación real con `IsoGenerationPipeline`: bloqueado de nuevo por falta de sesión elevada y Windows ADK; añadida una comprobación de entorno explícita (mensajes exactos) al pipeline, y localizada una ISO real de la build exacta 26300.9278 con hashes registrados para verificación futura. Ver `prompts/20-resultado.md`.
+- [ ] **P21** – confirmación real de P16/P17/P19/P20 sobre la ISO objetivo (con sesión elevada y Windows ADK instalado), integración en `MRS.WindowsBuilder`, y optimización de tamaño.

@@ -29,6 +29,7 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     private readonly FakeRemovalEngine _removalEngine = new();
     private readonly FakePostInstallPackageBuilder _postInstallPackageBuilder = new();
     private readonly FakeOscdimgRunner _oscdimgRunner = new();
+    private readonly FakeElevationChecker _elevationChecker = new();
 
     public IsoGenerationPipelineTests()
     {
@@ -58,7 +59,7 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     }
 
     private IsoGenerationPipeline NewPipeline()
-        => new(_treeCopier, _isoMounter, _installationImageService, _workingImageFactory, _removalEngine, _postInstallPackageBuilder, _oscdimgRunner);
+        => new(_treeCopier, _isoMounter, _installationImageService, _workingImageFactory, _removalEngine, _postInstallPackageBuilder, _oscdimgRunner, _elevationChecker);
 
     private IsoGenerationRequest ValidRequest() => new()
     {
@@ -85,6 +86,35 @@ public sealed class IsoGenerationPipelineTests : IDisposable
         Assert.Equal(1, _workingImageFactory.CallCount);
         Assert.Equal(1, _removalEngine.CallCount);
         Assert.Equal(1, _oscdimgRunner.CallCount);
+    }
+
+    [Fact]
+    public async Task Missing_elevation_aborts_with_the_exact_required_message_before_validating_the_request()
+    {
+        _elevationChecker.Elevated = false;
+        var pipeline = NewPipeline();
+
+        var result = await pipeline.GenerateAsync(ValidRequest());
+
+        Assert.False(result.Success);
+        Assert.Null(result.Workspace);
+        Assert.Contains("Se requieren privilegios de administrador para ejecutar DISM.", result.Errors);
+        Assert.Equal(0, _treeCopier.CallCount);
+    }
+
+    [Fact]
+    public async Task Missing_oscdimg_aborts_with_the_exact_required_message_before_touching_any_WIM()
+    {
+        _oscdimgRunner.Available = false;
+        var pipeline = NewPipeline();
+
+        var result = await pipeline.GenerateAsync(ValidRequest());
+
+        Assert.False(result.Success);
+        Assert.Null(result.Workspace);
+        Assert.Contains("Windows ADK/oscdimg no está instalado.", result.Errors);
+        Assert.Equal(0, _treeCopier.CallCount);
+        Assert.Equal(0, _installationImageService.CallCount);
     }
 
     [Fact]
