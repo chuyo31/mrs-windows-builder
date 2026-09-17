@@ -49,13 +49,17 @@ public sealed partial class ImageInventoryService
     /// Monta la ISO, localiza <c>sources\install.wim</c> y construye el inventario
     /// del índice indicado. Desmonta la ISO al terminar.
     /// </summary>
-    public async Task<InventoryResult> BuildInventoryFromIsoAsync(string isoPath, int index, CancellationToken cancellationToken = default)
+    public async Task<InventoryResult> BuildInventoryFromIsoAsync(
+        string isoPath, int index, CancellationToken cancellationToken = default,
+        IProgress<InventoryProgressInfo>? progress = null)
     {
         var mounter = _isoMounter
             ?? throw new InvalidOperationException("ImageInventoryService se creó sin IIsoMounter.");
 
         if (string.IsNullOrWhiteSpace(isoPath) || !File.Exists(isoPath))
             throw new FileNotFoundException("La ISO indicada no existe.", isoPath);
+
+        Report(progress, PreparingStage, 0, "Montando la ISO para localizar la imagen...");
 
         await using var isoMount = await mounter.MountAsync(isoPath, cancellationToken).ConfigureAwait(false);
 
@@ -66,53 +70,74 @@ public sealed partial class ImageInventoryService
             throw new ImageAnalysisException(-1,
                 "La imagen es ESD; DISM /Mount-Image requiere WIM (conversión en una fase posterior).");
 
-        return await BuildInventoryAsync(imagePath, index, cancellationToken).ConfigureAwait(false);
+        return await BuildInventoryAsync(imagePath, index, cancellationToken, progress).ConfigureAwait(false);
     }
+
+    private const string PreparingStage = "Preparando inventariado";
+    private const string CheckingMountsStage = "Comprobando montajes";
+    private const string MountingStage = "Montando imagen";
+    private const string BuildingCatalogStage = "Construyendo catálogo";
+    private const string FinalizingStage = "Finalizando";
+    private const string CompletedStage = "100 % completado";
 
     /// <summary>
     /// Construye el inventario del índice indicado de un WIM accesible en disco.
     /// No requiere montaje de ISO (usado también por los tests).
+    ///
+    /// El <paramref name="progress"/> es opcional y puramente informativo (P22):
+    /// reporta las FASES reales de este método (workspace, montaje, cada
+    /// categoría DISM, desmontaje), nunca un porcentaje interno de DISM — DISM
+    /// no ofrece ninguno fiable para estas operaciones, así que el porcentaje
+    /// aquí solo avanza al empezar/terminar cada fase ya conocida de antemano.
     /// </summary>
-    public async Task<InventoryResult> BuildInventoryAsync(string wimPath, int index, CancellationToken cancellationToken = default)
+    public async Task<InventoryResult> BuildInventoryAsync(
+        string wimPath, int index, CancellationToken cancellationToken = default,
+        IProgress<InventoryProgressInfo>? progress = null)
     {
         _logger.Info("Creando workspace...");
+        Report(progress, PreparingStage, 0, "Creando workspace de inventariado...");
         var workspace = InventoryWorkspace.CreateNew(_workspaceRoot);
         var mountDir = workspace.MountPath;
         var mounted = false;
         var keepWorkspace = false;
+        var succeeded = false;
 
         LogContext("workspace-creado", workspace, wimPath);
 
         try
         {
+            Report(progress, CheckingMountsStage, 5, "Comprobando montajes huérfanos...");
             await RecoverOrphanMountsAsync(cancellationToken).ConfigureAwait(false);
 
             _logger.Info($"Montando imagen índice {index}...");
+            Report(progress, MountingStage, 10, $"Montando imagen (índice {index})...");
             var mount = await _dism.MountWimAsync(wimPath, index, mountDir, readOnly: true, cancellationToken).ConfigureAwait(false);
-            EnsureDismSucceeded(mount, "Montaje de la imagen");
+            EnsureDismSucceeded(mount, "Montaje de la imagen", progress, MountingStage, 10);
             mounted = true;
             LogContext("montada", workspace, wimPath);
+            Report(progress, MountingStage, 20, "Imagen montada.");
 
             var packages = await RunCategoryAsync(
-                "paquetes", "Inventariando paquetes...",
+                "paquetes", "Analizando paquetes...", progress, "Analizando paquetes", 20, 35,
                 () => _dism.GetPackagesAsync(mountDir, cancellationToken), _packageParser.Parse).ConfigureAwait(false);
 
             var features = await RunCategoryAsync(
-                "características", "Inventariando características...",
+                "características", "Analizando características...", progress, "Analizando características", 35, 48,
                 () => _dism.GetFeaturesAsync(mountDir, cancellationToken), _featureParser.Parse).ConfigureAwait(false);
 
             var capabilities = await RunCategoryAsync(
-                "capacidades", "Inventariando capacidades...",
+                "capacidades", "Analizando capacidades...", progress, "Analizando capacidades", 48, 61,
                 () => _dism.GetCapabilitiesAsync(mountDir, cancellationToken), _capabilityParser.Parse).ConfigureAwait(false);
 
             var apps = await RunCategoryAsync(
-                "aplicaciones", "Inventariando aplicaciones...",
+                "aplicaciones", "Analizando aplicaciones provisionadas...", progress, "Analizando aplicaciones provisionadas", 61, 74,
                 () => _dism.GetProvisionedAppxPackagesAsync(mountDir, cancellationToken), _appParser.Parse).ConfigureAwait(false);
 
             var drivers = await RunCategoryAsync(
-                "drivers", "Inventariando drivers...",
+                "drivers", "Analizando controladores...", progress, "Analizando controladores", 74, 87,
                 () => _dism.GetDriversAsync(mountDir, cancellationToken), _driverParser.Parse).ConfigureAwait(false);
 
+            Report(progress, BuildingCatalogStage, 90, "Construyendo catálogo de inventario...");
             var inventory = new ImageInventory
             {
                 Packages = packages,
@@ -121,9 +146,11 @@ public sealed partial class ImageInventoryService
                 ProvisionedApps = apps,
                 Drivers = drivers,
             };
+            Report(progress, BuildingCatalogStage, 93, "Catálogo de inventario construido.");
 
             _logger.Info("Inventario completado.");
             _logger.Info("Imagen inventariada correctamente.");
+            succeeded = true;
             return new InventoryResult(inventory, workspace.RootPath, WorkspaceKept: false);
         }
         catch
@@ -133,6 +160,11 @@ public sealed partial class ImageInventoryService
         }
         finally
         {
+            if (mounted)
+            {
+                Report(progress, FinalizingStage, 95, "Desmontando imagen...");
+            }
+
             // Confirmación explícita: solo se borra el workspace (y su directorio de
             // montaje) cuando queda DEMOSTRADO que DISM ya no lo considera montado.
             // Borrar un directorio que DISM todavía cree montado es exactamente lo que
@@ -158,8 +190,18 @@ public sealed partial class ImageInventoryService
                 try { workspace.Delete(); }
                 catch (Exception ex) { _logger.Warn($"No se pudo eliminar el workspace: {ex.Message}"); }
             }
+
+            // Solo se informa 100 % si el inventario se construyó de verdad: un
+            // fallo (excepción) nunca debe terminar reportando éxito completo,
+            // aunque el desmontaje posterior haya ido bien.
+            if (succeeded)
+                Report(progress, CompletedStage, 100, "Inventariado completado.", InventoryProgressLevel.Success);
         }
     }
+
+    private static void Report(IProgress<InventoryProgressInfo>? progress, string stage, int percent, string message,
+        InventoryProgressLevel level = InventoryProgressLevel.Info)
+        => progress?.Report(InventoryProgressInfo.Create(stage, percent, message, level));
 
     /// <summary>
     /// Log estructurado (OperationId/WorkspaceId/SourceWimPath/WorkingWimPath/MountDir).
@@ -176,10 +218,15 @@ public sealed partial class ImageInventoryService
     private async Task<IReadOnlyList<T>> RunCategoryAsync<T>(
         string categoryForError,
         string startMessage,
+        IProgress<InventoryProgressInfo>? progress,
+        string stage,
+        int percentStart,
+        int percentEnd,
         Func<Task<ProcessRunResult>> run,
         Func<string, IReadOnlyList<T>> parse)
     {
         _logger.Info(startMessage);
+        Report(progress, stage, percentStart, startMessage);
 
         var result = await run().ConfigureAwait(false);
         if (result.TimedOut || result.ExitCode != 0)
@@ -188,10 +235,14 @@ public sealed partial class ImageInventoryService
             _logger.Error($"Comando: {result.CommandLine}");
             _logger.Error($"ExitCode: {result.ExitCode}");
             LogDismDiagnostics(result);
-            throw new ImageAnalysisException(result.ExitCode, $"Inventario de {categoryForError} fallido.");
+            var message = $"Inventario de {categoryForError} fallido.";
+            Report(progress, stage, percentStart, message, InventoryProgressLevel.Error);
+            throw new ImageAnalysisException(result.ExitCode, message);
         }
 
-        return parse(result.StandardOutput);
+        var parsed = parse(result.StandardOutput);
+        Report(progress, stage, percentEnd, $"{startMessage} completado.", InventoryProgressLevel.Success);
+        return parsed;
     }
 
     /// <summary>
@@ -296,12 +347,16 @@ public sealed partial class ImageInventoryService
         }
     }
 
-    private void EnsureDismSucceeded(ProcessRunResult result, string operation)
+    private void EnsureDismSucceeded(ProcessRunResult result, string operation,
+        IProgress<InventoryProgressInfo>? progress = null, string? stage = null, int percent = 0)
     {
         if (result.TimedOut)
         {
             _logger.Error($"{operation}: DISM no respondió dentro del tiempo máximo.");
-            throw new ImageAnalysisException(-1, $"{operation} fallido (timeout).");
+            var timeoutMessage = $"{operation} fallido (timeout).";
+            if (stage is not null)
+                Report(progress, stage, percent, timeoutMessage, InventoryProgressLevel.Error);
+            throw new ImageAnalysisException(-1, timeoutMessage);
         }
 
         if (result.ExitCode != 0)
@@ -310,7 +365,10 @@ public sealed partial class ImageInventoryService
             _logger.Error($"Comando: {result.CommandLine}");
             _logger.Error($"ExitCode: {result.ExitCode}");
             LogDismDiagnostics(result);
-            throw new ImageAnalysisException(result.ExitCode, $"{operation} fallido.");
+            var message = $"{operation} fallido.";
+            if (stage is not null)
+                Report(progress, stage, percent, message, InventoryProgressLevel.Error);
+            throw new ImageAnalysisException(result.ExitCode, message);
         }
     }
 

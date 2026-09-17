@@ -317,10 +317,17 @@ public partial class MainWindow : Window
         SetBusy(true);
         ContinueButton.IsEnabled = false;
         StatusText.Text = "Inventariando imagen...";
+        ShowInventoryProgress();
+
+        // System.Progress<T> reenvía cada Report() al SynchronizationContext
+        // capturado aquí (el de la UI): OnInventoryProgress se ejecuta siempre en
+        // el hilo de la ventana sin bloquearlo. ImageInventoryService no conoce
+        // WPF, solo un IProgress<InventoryProgressInfo> (mismo patrón que P10).
+        IProgress<InventoryProgressInfo> progress = new Progress<InventoryProgressInfo>(OnInventoryProgress);
 
         try
         {
-            var result = await _inventoryService.BuildInventoryFromIsoAsync(isoPath, edition.Index);
+            var result = await _inventoryService.BuildInventoryFromIsoAsync(isoPath, edition.Index, default, progress);
             _inventory = result.Inventory;
             ShowInventory(edition, result);
             StatusText.Text = "Inventario completado";
@@ -343,7 +350,31 @@ public partial class MainWindow : Window
         finally
         {
             SetBusy(false);
+            HideInventoryProgress();
         }
+    }
+
+    private void ShowInventoryProgress()
+    {
+        InventoryProgressBar.Value = 0;
+        InventoryPercentText.Text = "0 %";
+        InventoryPhaseText.Text = "Preparando inventariado...";
+        InventoryProgressPanel.Visibility = Visibility.Visible;
+    }
+
+    private void HideInventoryProgress() => InventoryProgressPanel.Visibility = Visibility.Collapsed;
+
+    /// <summary>
+    /// Único punto de entrada de la telemetría de progreso del inventariado hacia
+    /// la UI (P22): actualiza la barra/porcentaje/fase visibles. No decide nada
+    /// de negocio; solo presentación. El terminal/log (<see cref="_logger"/>)
+    /// sigue funcionando exactamente igual, sin relación con esta barra.
+    /// </summary>
+    private void OnInventoryProgress(InventoryProgressInfo info)
+    {
+        InventoryProgressBar.Value = info.Percent;
+        InventoryPercentText.Text = $"{info.Percent} %";
+        InventoryPhaseText.Text = info.Message;
     }
 
     private void ShowInventory(ImageEdition edition, InventoryResult result)
