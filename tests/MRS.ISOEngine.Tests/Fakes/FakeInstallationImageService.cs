@@ -11,6 +11,7 @@ internal sealed class FakeInstallationImageService : IInstallationImageService
     public IReadOnlyList<string> AppliedLogLines { get; set; } = new[] { "[COMPAT] BypassTPM applied" };
     public int CallCount { get; private set; }
     public GenerationWorkspace? LastWorkspace { get; private set; }
+    public InstallationOptionsModel? LastOptions { get; private set; }
 
     public Task<InstallationImageResult> ApplyAsync(
         string sourceIsoPath, GenerationWorkspace workspace, InstallationOptionsModel options,
@@ -19,6 +20,7 @@ internal sealed class FakeInstallationImageService : IInstallationImageService
     {
         CallCount++;
         LastWorkspace = workspace;
+        LastOptions = options;
         return Task.FromResult(new InstallationImageResult(Success, AppliedLogLines, Errors, Success ? "autounattend.xml" : null));
     }
 }

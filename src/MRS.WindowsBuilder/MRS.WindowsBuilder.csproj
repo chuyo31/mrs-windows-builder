@@ -18,6 +18,8 @@
     <ProjectReference Include="..\MRS.RemovalEngine\MRS.RemovalEngine.csproj" />
     <ProjectReference Include="..\MRS.ProfileEngine\MRS.ProfileEngine.csproj" />
     <ProjectReference Include="..\MRS.InstallationOptions\MRS.InstallationOptions.csproj" />
+    <ProjectReference Include="..\MRS.PostInstall\MRS.PostInstall.csproj" />
+    <ProjectReference Include="..\MRS.ISOEngine\MRS.ISOEngine.csproj" />
   </ItemGroup>
 
 </Project>

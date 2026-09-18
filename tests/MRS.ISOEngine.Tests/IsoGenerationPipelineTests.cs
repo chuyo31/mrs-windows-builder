@@ -239,6 +239,59 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallationOptions_are_forwarded_to_the_boot_wim_stage_unmodified()
+    {
+        // P24, item 6: InstallationOptions se transmite tal cual (cuenta local,
+        // OOBE offline, bypasses) -- nadie en el camino UI -> pipeline lo altera.
+        var pipeline = NewPipeline();
+        var options = InstallationOptionsModel.Default with
+        {
+            BypassStorage = false,
+            AllowLocalAccount = false,
+            BypassRam = false,
+        };
+        var request = ValidRequest() with { InstallationOptions = options };
+
+        var result = await pipeline.GenerateAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(options, _installationImageService.LastOptions);
+    }
+
+    [Fact]
+    public async Task Storage_bypass_is_rejected_before_creating_any_workspace()
+    {
+        // P24, item 5: si StorageBypass está activado, el pipeline rechaza la
+        // generación de forma segura (P15/P16), reutilizando la validación ya
+        // existente -- no crea ningún workspace ni copia nada.
+        var pipeline = NewPipeline();
+        var request = ValidRequest() with
+        {
+            InstallationOptions = InstallationOptionsModel.Default with { BypassStorage = true },
+        };
+
+        var result = await pipeline.GenerateAsync(request);
+
+        Assert.False(result.Success);
+        Assert.Null(result.Workspace);
+        Assert.Equal(0, _treeCopier.CallCount);
+    }
+
+    [Fact]
+    public async Task A_cancellation_during_the_ISO_tree_copy_propagates_instead_of_reporting_false_success()
+    {
+        // P24, item 9: una cancelación nunca debe traducirse en un resultado con
+        // Success=true -- el pipeline deja que OperationCanceledException se
+        // propague (no la atrapa junto al resto de excepciones inesperadas).
+        _treeCopier.OnCopy = (_, _) => throw new OperationCanceledException();
+        var pipeline = NewPipeline();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => pipeline.GenerateAsync(ValidRequest()));
+
+        Assert.Equal(0, _oscdimgRunner.CallCount);
+    }
+
+    [Fact]
     public async Task Oscdimg_unavailable_aborts_with_a_clear_message_without_calling_BuildIsoAsync()
     {
         _oscdimgRunner.Available = false;

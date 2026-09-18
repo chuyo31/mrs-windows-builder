@@ -1114,7 +1114,7 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Text="CREANDO IMAGEN" Foreground="{StaticResource TextPrimary}"
+                <TextBlock Grid.Row="0" Text="GENERANDO ISO" Foreground="{StaticResource TextPrimary}"
                            FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4"/>
 
                 <StackPanel Grid.Row="1" Margin="0,14,0,12">
@@ -1125,9 +1125,9 @@
                                    Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
                     </Grid>
                     <ProgressBar x:Name="ExecutionProgressBar" Style="{StaticResource DarkProgressBar}" Value="0"/>
-                    <TextBlock x:Name="ExecutionStatusText" Text="Preparando imagen..." Margin="0,8,0,0"
+                    <TextBlock x:Name="ExecutionStatusText" Text="Preparando generación..." Margin="0,8,0,0"
                                Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="ExecutionProgressText" Text="0 / 0 acciones" Margin="0,2,0,0"
+                    <TextBlock x:Name="ExecutionProgressText" Text="Fase 1 / 1" Margin="0,2,0,0"
                                Foreground="{StaticResource TextSecondary}" FontSize="11"/>
                 </StackPanel>
 

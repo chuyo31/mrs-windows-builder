@@ -18,6 +18,15 @@ using MRS.ImageEngine.Inventory;
 using MRS.ImageEngine.Iso;
 using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
+using MRS.ISOEngine;
+using MRS.ISOEngine.BootWim;
+using MRS.ISOEngine.Models;
+using MRS.ISOEngine.Oscdimg;
+using MRS.ISOEngine.Pipeline;
+using MRS.ISOEngine.Registry;
+using MRS.ISOEngine.TreeCopy;
+using MRS.PostInstall.Models;
+using MRS.PostInstall.Packaging;
 using MRS.ProfileEngine;
 using MRS.ProfileEngine.Models;
 using MRS.RemovalEngine;
@@ -79,7 +88,7 @@ public partial class MainWindow : Window
     private readonly IIsoMounter _isoMounter;
     private readonly IWorkingImageFactory _workingImageFactory;
     private readonly RemovalEngineClass _removalEngine;
-    private readonly RemovalVerifier _removalVerifier = new();
+    private readonly IIsoGenerationPipeline _isoGenerationPipeline;
 
     private IsoInspectionResult? _iso;
     private ImageInfo? _imageInfo;
@@ -88,7 +97,7 @@ public partial class MainWindow : Window
     private List<ComponentRow> _allComponentRows = new();
     private RemovalPlan? _pendingPlan;
     private RemovalPlan? _confirmedPlan;
-    private List<ExecutionRow> _executionRows = new();
+    private List<IsoPhaseRow> _isoPhaseRows = new();
     private CancellationTokenSource? _executionCts;
     private bool _isApplyingChanges;
     private bool _executionUiUnlocked;
@@ -115,6 +124,20 @@ public partial class MainWindow : Window
         _inventoryService = new ImageInventoryService(dismRunner, _isoMounter, _logger);
         _workingImageFactory = new WorkingImageFactory(dismRunner, _logger);
         _removalEngine = new RemovalEngineClass(dismRunner, _logger);
+
+        // P24: une las piezas ya existentes (P16/P18/P19/P20/P23) en el único
+        // pipeline real de generación de ISO -- MainWindow no reimplementa
+        // ninguna de sus fases, solo lo construye e invoca.
+        var registryEditor = new OfflineRegistryEditor(processRunner);
+        var bootWimProvisioner = new BootWimProvisioner(_isoMounter, _logger);
+        var bootWimModifier = new BootWimModifier(dismRunner, registryEditor, _logger);
+        var installationImageService = new InstallationImageService(bootWimProvisioner, bootWimModifier, _logger);
+        var treeCopier = new IsoTreeCopier(_isoMounter, _logger);
+        var postInstallPackageBuilder = new PostInstallPackageBuilder(_logger);
+        var oscdimgRunner = new OscdimgRunner(processRunner);
+        _isoGenerationPipeline = new IsoGenerationPipeline(
+            treeCopier, _isoMounter, installationImageService, _workingImageFactory,
+            _removalEngine, postInstallPackageBuilder, oscdimgRunner, logger: _logger);
 
         LoadProfiles();
 
@@ -930,6 +953,10 @@ public partial class MainWindow : Window
         // sigue mostrando la lista normal, con cada componente en rojo/bloqueado).
         NoRemovalsBanner.Visibility = plan.TotalSelected == 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        // P24: el texto deja claro que "0 eliminaciones" es un resultado válido
+        // que igualmente genera una ISO -- nunca "no hay nada que hacer".
+        PlanConfirmButton.Content = plan.TotalSelected == 0 ? "GENERAR ISO" : "CONFIRMAR Y GENERAR ISO";
+
         // Las opciones de instalación se muestran siempre, con o sin eliminaciones.
         RefreshInstallationOptionsCheckboxes();
 
@@ -1068,101 +1095,115 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(isoPath) || edition is null)
             return;
 
-        await RunExecutionAsync(isoPath, edition.Index, plan);
+        await RunIsoGenerationAsync(isoPath, edition.Index, plan);
     }
 
-    // ---- Pantalla de ejecución (RemovalEngine) -----------------------------
+    // ---- Pantalla de generación de ISO (P24: MRS.ISOEngine.IsoGenerationPipeline) ----
+    //
+    // MainWindow no reimplementa ninguna fase (workspace, árbol de la ISO,
+    // boot.wim, install.wim, PostInstall, validación, oscdimg): todas viven en
+    // IsoGenerationPipeline (P19/P20/P23), que ya conoce el caso "0 eliminaciones"
+    // (RemovalEngine se salta el montaje/commit por sí solo, ver P23). Esta
+    // pantalla solo construye la solicitud, invoca el pipeline y presenta su
+    // progreso -- ningún dato se decide aquí que no viniera ya de la UI.
 
-    private async Task RunExecutionAsync(string isoPath, int index, RemovalPlan plan)
+    private static readonly (string Stage, string Label)[] PipelineStageLabels =
     {
-        ShowExecutionScreen(plan);
+        ("Comprobación de entorno", "Validando entorno"),
+        ("Validación", "Validando entorno"),
+        ("Generation workspace", "Preparando workspace"),
+        ("Preparando árbol de la ISO", "Copiando árbol ISO"),
+        ("Modificando boot.wim", "Preparando boot.wim"),
+        ("Integración PostInstall", "Preparando PostInstall"),
+        ("Validación final", "Validación final"),
+        ("Generando ISO (oscdimg)", "Creando ISO con oscdimg"),
+        ("Finalizando", "Finalizando"),
+    };
+
+    private async Task RunIsoGenerationAsync(string isoPath, int index, RemovalPlan plan)
+    {
+        // P24, sección POSTINSTALL: no existe todavía ningún mecanismo en la UI
+        // para seleccionar los instaladores reales (.NET Desktop Runtime/PCPI);
+        // activarlo sin eso produciría una solicitud que la validación (P18)
+        // rechazaría siempre por archivos inexistentes. Se documenta como
+        // limitación conocida en vez de inventar rutas (ver prompts/24-resultado.md).
+        const bool postInstallEnabled = false;
+        var outputIsoPath = BuildOutputIsoPath(isoPath);
+
+        ShowIsoGenerationScreen(plan, postInstallEnabled);
         _executionCts = new CancellationTokenSource();
         _isApplyingChanges = true;
         _executionUiUnlocked = false;
-        _logger.Entry += OnExecutionLogEntry;
 
         // System.Progress<T> reenvía cada Report() al SynchronizationContext
-        // capturado aquí (el de la UI), así que OnExecutionProgress se ejecuta
-        // siempre en el hilo de la ventana sin bloquearlo. RemovalEngine y
-        // WorkingImageFactory no conocen WPF: solo ven un IProgress<ProgressInfo>.
-        IProgress<ProgressInfo> progress = new Progress<ProgressInfo>(OnExecutionProgress);
+        // capturado aquí (el de la UI), así que OnIsoGenerationProgress se
+        // ejecuta siempre en el hilo de la ventana sin bloquearlo.
+        // IsoGenerationPipeline no conoce WPF: solo ve un
+        // IProgress<InstallationProgressInfo> (mismo patrón que P10/P22).
+        IProgress<InstallationProgressInfo> progress = new Progress<InstallationProgressInfo>(OnIsoGenerationProgress);
 
-        WorkingImage? workingImage = null;
+        if (plan.TotalSelected == 0)
+            _logger.Info("[REMOVAL] Sin eliminaciones de componentes.");
+
+        var request = new IsoGenerationRequest
+        {
+            SourceIsoPath = isoPath,
+            EditionIndex = index,
+            Architecture = "amd64",
+            // InstallationOptions se transmite tal cual: esta pantalla no decide
+            // ni cambia ningún valor (cuenta local, OOBE offline, bypasses).
+            InstallationOptions = _installationOptions,
+            AccountConfiguration = new AutounattendConfiguration(),
+            RemovalPlan = plan,
+            PostInstallConfiguration = new PostInstallConfiguration { Enabled = postInstallEnabled },
+            PostInstallSourceFiles = new PostInstallSourceFiles(),
+            OutputIsoPath = outputIsoPath,
+        };
 
         try
         {
-            ExecutionStatusText.Text = "Preparando imagen...";
-            _logger.Info("Preparando imagen...");
-            progress.Report(ProgressInfo.Create("Preparación / validación", 0, "Montando la ISO para localizar la imagen..."));
+            var result = await _isoGenerationPipeline.GenerateAsync(request, _executionCts.Token, progress);
 
-            string wimPath;
-            await using (var isoMount = await _isoMounter.MountAsync(isoPath, _executionCts.Token))
-            {
-                wimPath = LocateInstallImage(isoMount.RootPath)
-                    ?? throw new FileNotFoundException(@"La ISO no contiene sources\install.wim ni sources\install.esd.");
-
-                ExecutionStatusText.Text = "Creando imagen de trabajo...";
-                workingImage = await _workingImageFactory.CreateAsync(wimPath, index, workspaceRoot: null, _executionCts.Token, progress);
-            }
-
-            // P23: con 0 seleccionados, RemovalEngine ya no monta ni hace commit
-            // (nada que aplicar); el texto refleja lo que realmente va a pasar.
-            ExecutionStatusText.Text = plan.TotalSelected == 0
-                ? "Sin eliminaciones: conservando la imagen exportada..."
-                : "Montando imagen...";
-            var result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token, progress);
-
-            ReconcileExecutionRows(result);
-
-            // La operación transaccional (Apply -> Commit -> Unmount -> comprobación
-            // interna de montajes) ya ha terminado POR COMPLETO en este punto: la UI
-            // se desbloquea aquí, antes de mostrar cualquier aviso o de lanzar el
-            // reinventario opcional, para que "Cerrar" nunca dependa de un DISM extra.
             UnlockExecutionUi();
 
-            if (result.Committed)
+            if (result.Success)
             {
-                StatusText.Text = "Cambios aplicados";
-                var confirmationMessage = plan.TotalSelected == 0
-                    ? "Imagen preparada sin eliminaciones de componentes."
-                    : $"Cambios aplicados correctamente ({result.ActionsExecuted.Count} acción(es)).";
-                MessageBox.Show(this, confirmationMessage,
+                MarkAllPhaseRowsDone();
+                StatusText.Text = "ISO generada";
+                ExecutionStatusText.Text = $"ISO generada correctamente. Ruta: {result.OutputIsoPath}";
+                MessageBox.Show(this, $"ISO generada correctamente\nRuta: {result.OutputIsoPath}",
                     "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
-
-                // Diagnóstico best-effort: no forma parte de la operación transaccional
-                // y su duración (o un fallo) nunca debe volver a bloquear la UI.
-                await VerifyExecutionAsync(workingImage, result);
-            }
-            else if (result.Phase == RemovalExecutionPhase.Cancelled)
-            {
-                StatusText.Text = "Operación cancelada";
-                ExecutionStatusText.Text = "Operación cancelada. La imagen de trabajo no ha sido modificada.";
             }
             else
             {
-                StatusText.Text = "Error al aplicar cambios";
-                ExecutionStatusText.Text = "No se pudieron aplicar los cambios. Revisa el registro.";
-                MessageBox.Show(this, "No se han podido aplicar los cambios. Los cambios se han descartado.",
+                MarkCurrentPhaseRow(ExecutionRowStatus.Error);
+                StatusText.Text = "Error al generar la ISO";
+                ExecutionStatusText.Text = result.Errors.Count > 0
+                    ? string.Join(" ", result.Errors)
+                    : "No se pudo generar la ISO. Revisa el registro.";
+                MessageBox.Show(this, "No se ha podido generar la ISO. Revisa el registro para ver qué fase falló.",
                     "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         catch (OperationCanceledException)
         {
-            ExecutionStatusText.Text = "Operación cancelada. La imagen de trabajo no ha sido modificada.";
+            MarkCurrentPhaseRow(ExecutionRowStatus.Cancelled);
+            ExecutionStatusText.Text = "Generación cancelada. No se ha creado ninguna ISO final.";
             StatusText.Text = "Operación cancelada";
         }
         catch (Exception ex)
         {
-            _logger.Error($"Error inesperado al aplicar cambios: {ex.Message}");
-            ExecutionStatusText.Text = "Error al preparar la imagen de trabajo.";
+            _logger.Error($"Error inesperado al generar la ISO: {ex.Message}");
+            MarkCurrentPhaseRow(ExecutionRowStatus.Error);
+            ExecutionStatusText.Text = "Error inesperado al generar la ISO.";
             StatusText.Text = "Error";
-            MessageBox.Show(this, "No se han podido aplicar los cambios.",
+            MessageBox.Show(this, "No se ha podido generar la ISO.",
                 "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
             // Red de seguridad: garantiza que la UI queda desbloqueada pase lo que
-            // pase (fallo antes de montar, cancelación temprana, excepción
+            // pase (fallo antes de empezar, cancelación temprana, excepción
             // inesperada). Idempotente: si ya se desbloqueó arriba, no hace nada.
             UnlockExecutionUi();
             _executionCts?.Dispose();
@@ -1170,11 +1211,19 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Ruta determinista junto a la ISO original: nunca sobrescribe la ISO de origen.</summary>
+    private static string BuildOutputIsoPath(string sourceIsoPath)
+    {
+        var directory = Path.GetDirectoryName(sourceIsoPath);
+        var name = Path.GetFileNameWithoutExtension(sourceIsoPath);
+        return Path.Combine(string.IsNullOrEmpty(directory) ? "." : directory, $"{name}-MRS.iso");
+    }
+
     /// <summary>
-    /// Marca terminada la operación de aplicación de cambios: desactiva Cancelar,
-    /// habilita Cerrar y permite iniciar una nueva operación. Idempotente a
-    /// propósito, para poder llamarse tanto nada más terminar la ejecución como,
-    /// de forma defensiva, en el <c>finally</c>.
+    /// Marca terminada la generación de ISO: desactiva Cancelar, habilita Cerrar
+    /// y permite iniciar una nueva operación. Idempotente a propósito, para
+    /// poder llamarse tanto nada más terminar como, de forma defensiva, en el
+    /// <c>finally</c>.
     /// </summary>
     private void UnlockExecutionUi()
     {
@@ -1183,40 +1232,38 @@ public partial class MainWindow : Window
 
         _executionUiUnlocked = true;
         _isApplyingChanges = false;
-        _logger.Entry -= OnExecutionLogEntry;
         ExecutionCancelButton.IsEnabled = false;
         ExecutionCloseButton.IsEnabled = true;
     }
 
-    private async Task VerifyExecutionAsync(WorkingImage workingImage, RemovalExecutionResult result)
+    private void ShowIsoGenerationScreen(RemovalPlan plan, bool postInstallEnabled)
     {
-        try
+        var labels = new List<string>
         {
-            ExecutionStatusText.Text = "Verificando cambios...";
-            var reinventory = await _inventoryService.BuildInventoryAsync(workingImage.WorkingWimPath, workingImage.Index);
-            var verification = _removalVerifier.Verify(result, _inventory ?? new ImageInventory(), reinventory.Inventory);
+            "Preparando generación",
+            "Validando entorno",
+            "Preparando workspace",
+            "Copiando árbol ISO",
+            "Preparando boot.wim",
+            "Preparando install.wim",
+        };
 
-            _logger.Info($"Reinventario: {verification.Removed.Count} confirmado(s) eliminado(s), " +
-                         $"{verification.StillPresent.Count} todavía presente(s), " +
-                         $"{verification.UnexpectedChanges.Count} cambio(s) inesperado(s).");
+        // Fases condicionales: si no aplican, no se muestran como si se
+        // hubieran ejecutado (P24, "FASES VISIBLES").
+        if (plan.TotalSelected > 0)
+            labels.Add("Aplicando eliminaciones");
+        if (postInstallEnabled)
+            labels.Add("Preparando PostInstall");
 
-            ExecutionStatusText.Text = $"Cambios aplicados y verificados: {verification.Removed.Count} confirmado(s).";
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn($"No se pudo verificar el resultado sobre la imagen de trabajo: {ex.Message}");
-        }
-    }
+        labels.Add("Validación final");
+        labels.Add("Creando ISO con oscdimg");
+        labels.Add("Finalizando");
+        labels.Add("100 % completado");
 
-    private void ShowExecutionScreen(RemovalPlan plan)
-    {
-        _executionRows = plan.Components
-            .Where(c => c.Allowed)
-            .Select(c => new ExecutionRow(c.ComponentId, c.DisplayName))
-            .ToList();
+        _isoPhaseRows = labels.Select(l => new IsoPhaseRow(l)).ToList();
 
-        ExecutionStatusText.Text = "Preparando imagen...";
-        ExecutionProgressText.Text = $"0 / {_executionRows.Count} acciones";
+        ExecutionStatusText.Text = "Preparando generación...";
+        ExecutionProgressText.Text = $"Fase 1 / {_isoPhaseRows.Count}";
         ExecutionStageText.Text = "Etapa: --";
         ExecutionPercentText.Text = "0%";
         ExecutionProgressBar.Value = 0;
@@ -1227,40 +1274,120 @@ public partial class MainWindow : Window
 
         PlanOverlay.Visibility = Visibility.Collapsed;
         ExecutionOverlay.Visibility = Visibility.Visible;
-        StatusText.Text = "Aplicando cambios...";
+        StatusText.Text = "Generando ISO...";
     }
 
     /// <summary>
     /// Único punto de entrada de la telemetría de progreso hacia la UI: actualiza
-    /// la barra/porcentaje/etapa/mensaje y añade una línea al terminal. No
-    /// contiene ninguna lógica de negocio; solo presentación.
+    /// la barra/porcentaje/etapa/mensaje, la lista de fases y el terminal. No
+    /// contiene ninguna lógica de negocio; solo presentación. El porcentaje y las
+    /// fases son exactamente los que reporta <see cref="IIsoGenerationPipeline"/>
+    /// -- nunca se inventa aquí ningún progreso interno de DISM.
     /// </summary>
-    private void OnExecutionProgress(ProgressInfo info)
+    private void OnIsoGenerationProgress(InstallationProgressInfo info)
     {
         ExecutionProgressBar.Value = info.Percent;
         ExecutionPercentText.Text = $"{info.Percent}%";
         ExecutionStageText.Text = $"Etapa: {info.Stage}";
         ExecutionStatusText.Text = info.Message;
         AppendTerminalLine(info);
+
+        var label = MapStageToPhaseLabel(info.Stage, info.Percent);
+        if (label is not null)
+            AdvancePhaseRows(label, info.Level);
+
+        UpdatePhaseProgressText();
+        RefreshExecutionList();
     }
 
-    private void AppendTerminalLine(ProgressInfo info)
+    /// <summary>
+    /// Traduce el nombre de fase real del pipeline (P19/P20) a la etiqueta visible
+    /// de la pantalla (P24). "Modificando install.wim" cubre tanto la exportación
+    /// de la edición Pro como, si hay eliminaciones, la ejecución del RemovalPlan
+    /// sobre esa misma copia (P19 nunca separa ambas en fases DISM distintas):
+    /// el umbral del 60% es el propio punto en el que WorkingImageFactory termina
+    /// (P19, "Exportación de la imagen de trabajo") y RemovalEngine tomaría el
+    /// relevo si hubiera acciones que ejecutar.
+    /// </summary>
+    private string? MapStageToPhaseLabel(string stage, int percent)
+    {
+        if (stage == "Modificando install.wim")
+        {
+            var hasRemovalsRow = _isoPhaseRows.Any(r => r.DisplayName == "Aplicando eliminaciones");
+            return hasRemovalsRow && percent >= 60 ? "Aplicando eliminaciones" : "Preparando install.wim";
+        }
+
+        foreach (var (pipelineStage, label) in PipelineStageLabels)
+            if (pipelineStage == stage)
+                return label;
+
+        return null;
+    }
+
+    private void AdvancePhaseRows(string label, InstallationProgressLevel level)
+    {
+        var index = _isoPhaseRows.FindIndex(r => r.DisplayName == label);
+        if (index < 0)
+            return;
+
+        for (var i = 0; i < index; i++)
+            if (_isoPhaseRows[i].Status is ExecutionRowStatus.Pending or ExecutionRowStatus.InProgress)
+                _isoPhaseRows[i].Status = ExecutionRowStatus.Done;
+
+        _isoPhaseRows[index].Status = level == InstallationProgressLevel.Error
+            ? ExecutionRowStatus.Error
+            : ExecutionRowStatus.InProgress;
+
+        // "Preparando generación" no está ligada a ningún stage del pipeline
+        // (es la preparación que hace esta pantalla antes de invocarlo): se
+        // marca completada en cuanto llega el primer progreso real.
+        if (_isoPhaseRows.Count > 0 && _isoPhaseRows[0].Status == ExecutionRowStatus.Pending)
+            _isoPhaseRows[0].Status = ExecutionRowStatus.Done;
+    }
+
+    private void MarkAllPhaseRowsDone()
+    {
+        foreach (var row in _isoPhaseRows)
+            if (row.Status != ExecutionRowStatus.Error)
+                row.Status = ExecutionRowStatus.Done;
+
+        RefreshExecutionList();
+    }
+
+    private void MarkCurrentPhaseRow(ExecutionRowStatus status)
+    {
+        var current = _isoPhaseRows.FirstOrDefault(r => r.Status == ExecutionRowStatus.InProgress);
+        if (current is not null)
+            current.Status = status;
+
+        RefreshExecutionList();
+    }
+
+    private void UpdatePhaseProgressText()
+    {
+        if (_isoPhaseRows.Count == 0)
+            return;
+
+        var done = _isoPhaseRows.Count(r => r.Status == ExecutionRowStatus.Done);
+        ExecutionProgressText.Text = $"Fase {Math.Min(done + 1, _isoPhaseRows.Count)} / {_isoPhaseRows.Count}";
+    }
+
+    private void AppendTerminalLine(InstallationProgressInfo info)
     {
         var color = info.Level switch
         {
-            ProgressLevel.Success => Brushes.LightGreen,
-            ProgressLevel.Warning => Brushes.Khaki,
-            ProgressLevel.Error => Brushes.IndianRed,
+            InstallationProgressLevel.Success => Brushes.LightGreen,
+            InstallationProgressLevel.Warning => Brushes.Khaki,
+            InstallationProgressLevel.Error => Brushes.IndianRed,
             _ => new SolidColorBrush(Color.FromRgb(0xB6, 0xF5, 0xC8)),
         };
 
         var source = info.Level switch
         {
-            ProgressLevel.Success => "OK    ",
-            ProgressLevel.Warning => "WARN  ",
-            ProgressLevel.Error => "ERROR ",
+            InstallationProgressLevel.Success => "OK    ",
+            InstallationProgressLevel.Warning => "WARN  ",
+            InstallationProgressLevel.Error => "ERROR ",
             _ when info.Message.StartsWith("DISM:", StringComparison.OrdinalIgnoreCase) => "DISM  ",
-            _ when info.Message.Contains("eliminado", StringComparison.OrdinalIgnoreCase) => "REMOVE",
             _ => "MRS   ",
         };
 
@@ -1271,60 +1398,8 @@ public partial class MainWindow : Window
         ExecutionTerminal.ScrollToEnd();
     }
 
-    private void OnExecutionLogEntry(object? sender, LogEntry entry)
-    {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.Invoke(() => OnExecutionLogEntry(sender, entry));
-            return;
-        }
-
-        const string startPrefix = "[REMOVAL] Inicio: ";
-        const string doneSuffix = " eliminado correctamente.";
-
-        if (entry.Message.StartsWith(startPrefix, StringComparison.Ordinal))
-        {
-            var name = entry.Message[startPrefix.Length..];
-            var row = _executionRows.FirstOrDefault(r => r.DisplayName == name);
-            if (row is not null) row.Status = ExecutionRowStatus.InProgress;
-            ExecutionStatusText.Text = "Aplicando cambios...";
-            RefreshExecutionList();
-        }
-        else if (entry.Message.EndsWith(doneSuffix, StringComparison.Ordinal))
-        {
-            var name = entry.Message[..^doneSuffix.Length];
-            var row = _executionRows.FirstOrDefault(r => r.DisplayName == name);
-            if (row is not null) row.Status = ExecutionRowStatus.Done;
-            UpdateExecutionProgress();
-            RefreshExecutionList();
-        }
-    }
-
-    private void ReconcileExecutionRows(RemovalExecutionResult result)
-    {
-        var executedIds = result.ActionsExecuted.Select(i => i.ComponentId).ToHashSet();
-        var failedIds = result.ActionsFailed.Select(i => i.ComponentId).ToHashSet();
-
-        foreach (var row in _executionRows)
-        {
-            row.Status = executedIds.Contains(row.ComponentId)
-                ? ExecutionRowStatus.Done
-                : failedIds.Contains(row.ComponentId)
-                    ? ExecutionRowStatus.Error
-                    : result.Phase == RemovalExecutionPhase.Cancelled
-                        ? ExecutionRowStatus.Cancelled
-                        : ExecutionRowStatus.Skipped;
-        }
-
-        UpdateExecutionProgress();
-        RefreshExecutionList();
-    }
-
-    private void UpdateExecutionProgress()
-        => ExecutionProgressText.Text = $"{_executionRows.Count(r => r.Status == ExecutionRowStatus.Done)} / {_executionRows.Count}";
-
     private void RefreshExecutionList()
-        => ExecutionList.ItemsSource = _executionRows.ToList();
+        => ExecutionList.ItemsSource = _isoPhaseRows.ToList();
 
     private void ExecutionCancelButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1338,18 +1413,6 @@ public partial class MainWindow : Window
         ExecutionOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Visible;
         StatusText.Text = "Catálogo generado";
-    }
-
-    private static string? LocateInstallImage(string mountRoot)
-    {
-        foreach (var name in new[] { "install.wim", "install.esd" })
-        {
-            var candidate = Path.Combine(mountRoot, "sources", name);
-            if (File.Exists(candidate))
-                return candidate;
-        }
-
-        return null;
     }
 
     private static string JoinNames(IEnumerable<ComponentDefinition>? components)
@@ -1376,7 +1439,7 @@ public partial class MainWindow : Window
         _allComponentRows = new List<ComponentRow>();
         _pendingPlan = null;
         _confirmedPlan = null;
-        _executionRows = new List<ExecutionRow>();
+        _isoPhaseRows = new List<IsoPhaseRow>();
         InventoryOverlay.Visibility = Visibility.Collapsed;
         ComponentsOverlay.Visibility = Visibility.Collapsed;
         PlanOverlay.Visibility = Visibility.Collapsed;
@@ -1519,16 +1582,11 @@ public enum ExecutionRowStatus
     Cancelled,
 }
 
-/// <summary>Fila de la pantalla de ejecución: un componente permitido del plan y su progreso real.</summary>
-public sealed class ExecutionRow
+/// <summary>Fila de la pantalla GENERANDO ISO (P24): una fase del pipeline y su estado visual.</summary>
+public sealed class IsoPhaseRow
 {
-    public ExecutionRow(string componentId, string displayName)
-    {
-        ComponentId = componentId;
-        DisplayName = displayName;
-    }
+    public IsoPhaseRow(string displayName) => DisplayName = displayName;
 
-    public string ComponentId { get; }
     public string DisplayName { get; }
     public ExecutionRowStatus Status { get; set; } = ExecutionRowStatus.Pending;
 
