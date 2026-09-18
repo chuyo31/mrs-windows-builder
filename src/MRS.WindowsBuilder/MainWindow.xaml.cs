@@ -899,7 +899,11 @@ public partial class MainWindow : Window
             : $"Seleccionados: {plan.TotalSelected}    Permitidos: {plan.TotalAllowed}    " +
               $"Bloqueados: {plan.TotalBlocked}    ⚠ Advertencias: {plan.Warnings.Count}";
 
-        ViewPlanButton.IsEnabled = (plan?.TotalSelected ?? 0) > 0;
+        // P23: 0 seleccionados es un estado válido ("no se eliminará nada"), no
+        // un motivo para bloquear "Ver plan" -- pero el botón tampoco se activa
+        // solo porque exista un catálogo si el plan no se pudo construir (p. ej.
+        // sin inventario todavía).
+        ViewPlanButton.IsEnabled = plan is { IsValid: true };
     }
 
     private void ViewPlanButton_Click(object sender, RoutedEventArgs e)
@@ -921,6 +925,12 @@ public partial class MainWindow : Window
             $"{plan.TotalSelected} seleccionados    {plan.TotalAllowed} acciones permitidas    " +
             $"{plan.TotalBlocked} bloqueados    {plan.Warnings.Count} advertencias";
 
+        // P23: 0 seleccionados es un resultado válido ("no se eliminará nada"),
+        // distinto de "hay seleccionados pero todos están bloqueados" (ese caso
+        // sigue mostrando la lista normal, con cada componente en rojo/bloqueado).
+        NoRemovalsBanner.Visibility = plan.TotalSelected == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // Las opciones de instalación se muestran siempre, con o sin eliminaciones.
         RefreshInstallationOptionsCheckboxes();
 
         ComponentsOverlay.Visibility = Visibility.Collapsed;
@@ -1024,13 +1034,21 @@ public partial class MainWindow : Window
             return;
 
         _confirmedPlan = plan;
-        _logger.Info($"Plan de modificación confirmado y guardado en memoria: {plan.TotalAllowed} acción(es) " +
-                     $"pendiente(s), {plan.TotalBlocked} bloqueada(s). No se ha modificado el WIM.");
+        _logger.Info($"Plan de modificación confirmado y guardado en memoria: {plan.TotalSelected} seleccionado(s), " +
+                     $"{plan.TotalAllowed} acción(es) pendiente(s), {plan.TotalBlocked} bloqueada(s). No se ha modificado el WIM.");
         ShowPlan(plan);
 
-        if (plan.TotalAllowed == 0)
+        // P23: distinguir explícitamente los tres casos posibles.
+        //   A) 0 seleccionados            -> "no se eliminará nada", continuar.
+        //   B) seleccionados pero todos bloqueados -> mantener el bloqueo, no generar.
+        //   C) hay acciones permitidas    -> flujo de eliminación de siempre.
+        // 0 seleccionados NUNCA es un error: es distinto de "0 permitidos porque
+        // todo está bloqueado", que sí sigue impidiendo continuar.
+        if (plan.TotalSelected > 0 && plan.TotalAllowed == 0)
         {
-            MessageBox.Show(this, "El plan no tiene ninguna acción permitida; no hay nada que aplicar.",
+            MessageBox.Show(this,
+                "No hay ninguna acción permitida: todos los componentes seleccionados están bloqueados. " +
+                "No se aplicará ningún cambio.",
                 "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -1087,7 +1105,11 @@ public partial class MainWindow : Window
                 workingImage = await _workingImageFactory.CreateAsync(wimPath, index, workspaceRoot: null, _executionCts.Token, progress);
             }
 
-            ExecutionStatusText.Text = "Montando imagen...";
+            // P23: con 0 seleccionados, RemovalEngine ya no monta ni hace commit
+            // (nada que aplicar); el texto refleja lo que realmente va a pasar.
+            ExecutionStatusText.Text = plan.TotalSelected == 0
+                ? "Sin eliminaciones: conservando la imagen exportada..."
+                : "Montando imagen...";
             var result = await _removalEngine.ExecuteAsync(workingImage, plan, _executionCts.Token, progress);
 
             ReconcileExecutionRows(result);
@@ -1101,7 +1123,10 @@ public partial class MainWindow : Window
             if (result.Committed)
             {
                 StatusText.Text = "Cambios aplicados";
-                MessageBox.Show(this, $"Cambios aplicados correctamente ({result.ActionsExecuted.Count} acción(es)).",
+                var confirmationMessage = plan.TotalSelected == 0
+                    ? "Imagen preparada sin eliminaciones de componentes."
+                    : $"Cambios aplicados correctamente ({result.ActionsExecuted.Count} acción(es)).";
+                MessageBox.Show(this, confirmationMessage,
                     "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
 
                 // Diagnóstico best-effort: no forma parte de la operación transaccional

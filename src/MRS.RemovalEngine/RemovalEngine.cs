@@ -87,6 +87,21 @@ public sealed class RemovalEngine : IRemovalEngine
             return BuildResult(RemovalExecutionPhase.PreFlight, false, image, executed, failed, warnings, errors, false, false);
         }
 
+        // P23: 0 componentes seleccionados NO es un error, significa "no se
+        // eliminará nada". La imagen de trabajo ya salió de WorkingImageFactory
+        // con la edición correcta (Export-Image) y sin ningún cambio pendiente:
+        // montarla en escritura solo para hacer un commit sin ninguna acción
+        // real sería el "Mount/Commit innecesario" que esta fase pide evitar.
+        // Se toma la ruta más directa posible, sin ninguna llamada DISM adicional.
+        if (plan.TotalSelected == 0)
+        {
+            _logger.Info("[REMOVAL] 0 componentes seleccionados: no se ejecuta ninguna acción sobre la imagen.");
+            _logger.Info("[REMOVAL] La imagen conserva la edición exportada, sin cambios de componentes.");
+            image.IsCommitted = true;
+            progress?.Report(ProgressInfo.Create(finalizingStage, 100, "0 eliminaciones: la imagen se conserva sin cambios.", ProgressLevel.Success));
+            return BuildResult(RemovalExecutionPhase.Completed, true, image, executed, failed, warnings, errors, true, false);
+        }
+
         var indexCheck = await _dism.GetWimInfoAsync(image.WorkingWimPath, image.Index, cancellationToken).ConfigureAwait(false);
         if (!indexCheck.Succeeded)
         {

@@ -89,6 +89,83 @@ public sealed class RemovalEngineTests : IDisposable
         Assert.Contains($"discard:{orphan}", dism.Calls);
     }
 
+    // ================= P23: 0 SELECCIONADOS =================
+
+    [Fact]
+    public async Task Zero_selected_components_is_a_successful_completed_result_without_mounting()
+    {
+        var dism = new FakeDismRunner();
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        var result = await engine.ExecuteAsync(NewImage(), PlanFactory.Plan());
+
+        Assert.True(result.Success);
+        Assert.True(result.Committed);
+        Assert.False(result.Discarded);
+        Assert.Equal(RemovalExecutionPhase.Completed, result.Phase);
+        Assert.Empty(result.ActionsExecuted);
+        Assert.Empty(result.ActionsFailed);
+    }
+
+    [Fact]
+    public async Task Zero_selected_components_never_calls_DISM_at_all()
+    {
+        // "La ruta de 0 eliminaciones debe ser lo más directa posible" / "No
+        // ejecutar DISM adicional innecesario": ni montaje, ni commit, ni
+        // siquiera la comprobación de índice o de montajes huérfanos.
+        var dism = new FakeDismRunner();
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        await engine.ExecuteAsync(NewImage(), PlanFactory.Plan());
+
+        Assert.Empty(dism.Calls);
+    }
+
+    [Fact]
+    public async Task Selections_that_are_all_blocked_are_different_from_zero_selected_and_still_mount_and_commit()
+    {
+        // TotalSelected > 0 pero TotalAllowed == 0 (todo bloqueado) NUNCA debe
+        // confundirse con "0 seleccionados": el plan sigue siendo un plan real
+        // con selección del usuario, así que el flujo normal (montar/commit)
+        // se mantiene, aunque no haya ninguna acción que ejecutar.
+        var dism = new FakeDismRunner();
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        var blocked = PlanFactory.Item("appx:Clipchamp", "Clipchamp", ComponentSourceType.Appx,
+            RemovalActionType.RemoveAppx, allowed: false, protection: ComponentProtection.Protected);
+        var plan = PlanFactory.Plan(blocked);
+
+        var result = await engine.ExecuteAsync(NewImage(), plan);
+
+        Assert.Equal(1, plan.TotalSelected);
+        Assert.Equal(0, plan.TotalAllowed);
+        Assert.True(result.Success);
+        Assert.True(result.Committed);
+        Assert.Contains(dism.Calls, c => c.StartsWith("mount:"));
+        Assert.Contains(dism.Calls, c => c.StartsWith("commit:"));
+    }
+
+    [Fact]
+    public async Task A_plan_with_both_allowed_and_zero_selected_components_never_mixes_the_two_cases()
+    {
+        // Con al menos una selección real (aunque otras estén bloqueadas), el
+        // motor sigue el flujo normal de eliminación de siempre -- nunca el
+        // atajo de "0 seleccionados".
+        var dism = new FakeDismRunner();
+        var engine = new global::MRS.RemovalEngine.RemovalEngine(dism);
+
+        var clipchamp = PlanFactory.Item("appx:Clipchamp", "Clipchamp", ComponentSourceType.Appx, RemovalActionType.RemoveAppx);
+        var blocked = PlanFactory.Item("feature:Blocked", "Blocked", ComponentSourceType.Feature,
+            RemovalActionType.DisableFeature, allowed: false, protection: ComponentProtection.Protected);
+        var plan = PlanFactory.Plan(clipchamp, blocked);
+
+        var result = await engine.ExecuteAsync(NewImage(), plan);
+
+        Assert.True(result.Success);
+        Assert.Single(result.ActionsExecuted);
+        Assert.Contains("remove-appx:Clipchamp", dism.Calls);
+    }
+
     // ================= APPX / FEATURE / CAPABILITY / PACKAGE =================
 
     [Fact]

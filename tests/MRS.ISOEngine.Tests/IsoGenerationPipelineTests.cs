@@ -3,6 +3,7 @@ using MRS.ISOEngine.Pipeline;
 using MRS.ISOEngine.TreeCopy;
 using MRS.PostInstall.Models;
 using MRS.ISOEngine.Tests.Fakes;
+using MRS.RemovalPlanning.Models;
 using Xunit;
 using InstallationOptionsModel = MRS.InstallationOptions.Models.InstallationOptions;
 
@@ -172,6 +173,22 @@ public sealed class IsoGenerationPipelineTests : IDisposable
         Assert.True(result.Success);
         Assert.NotNull(_removalEngine.LastPlan);
         Assert.Empty(_removalEngine.LastPlan!.Actions);
+    }
+
+    [Fact]
+    public async Task An_explicit_RemovalPlan_with_zero_selected_components_still_reaches_oscdimg()
+    {
+        // P23: 0 eliminaciones no es un error -- el pipeline debe llegar hasta
+        // el final (oscdimg) igual que con un plan con acciones reales.
+        var pipeline = NewPipeline();
+        var request = ValidRequest() with { RemovalPlan = new RemovalPlan() };
+
+        var result = await pipeline.GenerateAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, request.RemovalPlan!.TotalSelected);
+        Assert.Equal(1, _oscdimgRunner.CallCount);
+        Assert.NotNull(result.OutputIsoPath);
     }
 
     [Fact]
