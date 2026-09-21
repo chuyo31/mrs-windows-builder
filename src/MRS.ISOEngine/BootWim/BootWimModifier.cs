@@ -154,18 +154,22 @@ public sealed class BootWimModifier : IBootWimModifier
             throw new IsoEngineException(
                 $"boot.wim en el workspace es sospechosamente pequeño ({info.Length} bytes); no se intentará montar.");
 
-        // No debería ocurrir nunca -- BootWimProvisioner ya quita ReadOnly de la
-        // copia de trabajo al crearla -- pero si algo distinto dejó este archivo
-        // en ese estado, es mejor fallar aquí con un mensaje claro que dejar que
-        // DISM lo intente y falle con "WIM open failed with access denied."
+        // P26: defensa en profundidad -- BootWimProvisioner.PrepareWorkingCopyForMount
+        // ya deja el archivo escribible en TODOS sus caminos (recién copiado o ya
+        // existente), así que esto no debería disparar nunca en la práctica. Si lo
+        // hiciera (por ejemplo, algo ajeno al pipeline dejó el archivo en ese
+        // estado), es mejor fallar aquí con un mensaje claro que dejar que DISM lo
+        // intente y falle con "WIM open failed with access denied."
         if ((info.Attributes & FileAttributes.ReadOnly) != 0)
             throw new IsoEngineException(
                 $"boot.wim en el workspace todavía tiene el atributo ReadOnly: '{bootWimPath}'. No se intentará montar.");
 
-        _logger.Info("Validando boot.wim antes de montarlo...");
+        _logger.Info("Validando boot.wim...");
         var wimInfo = await _dism.GetWimInfoAsync(bootWimPath, cancellationToken).ConfigureAwait(false);
         if (!wimInfo.Succeeded)
             throw new IsoEngineException(
                 $"boot.wim en el workspace no es un WIM válido (DISM /Get-WimInfo ExitCode {wimInfo.ExitCode}).", wimInfo.ExitCode);
+
+        _logger.Info("OK boot.wim válido y preparado para montaje.");
     }
 }

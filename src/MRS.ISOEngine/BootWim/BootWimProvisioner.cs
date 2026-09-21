@@ -30,7 +30,17 @@ public sealed class BootWimProvisioner : IBootWimProvisioner
 
         if (File.Exists(destinationBootWimPath))
         {
+            // P26: este archivo puede llegar aquí ya copiado por IsoTreeCopier, que
+            // copia el árbol COMPLETO de la ISO (incluido sources\boot.wim) antes de
+            // que InstallationImageService invoque este método. P25 solo preparaba
+            // (quitaba ReadOnly de) la copia justo después de copiarla aquí mismo;
+            // como en el flujo real casi siempre el archivo YA EXISTE por ese motivo,
+            // ese camino idempotente se saltaba la preparación por completo y el
+            // archivo llegaba a Mount-Wim todavía ReadOnly. Ahora se prepara en
+            // AMBOS caminos -- este método nunca devuelve sin haber dejado el
+            // archivo listo para montar, se haya copiado él mismo o no.
             _logger.Info("boot.wim ya existe en el workspace; no se vuelve a copiar (idempotente).");
+            PrepareWorkingCopyForMount(destinationBootWimPath);
             return false;
         }
 
@@ -46,24 +56,13 @@ public sealed class BootWimProvisioner : IBootWimProvisioner
             if (!File.Exists(sourceBootWim))
                 throw new IsoEngineException(@"La ISO no contiene sources\boot.wim.");
 
-            _logger.Info("Preparando boot.wim de trabajo...");
-
             // Copia simple: boot.wim no necesita reducirse a una sola edición (a
             // diferencia de install.wim con Export-Image) — sus índices son WinPE/
             // Setup y Recuperación, no ediciones de Windows.
             File.Copy(sourceBootWim, destinationBootWimPath, overwrite: false);
-
-            // P25: File.Copy conserva los atributos del archivo origen. Como
-            // sources\boot.wim se lee desde una ISO montada en SOLO LECTURA, la
-            // copia hereda el atributo ReadOnly, y DISM no puede montarla en
-            // escritura hasta quitárselo ("Fail to flush file buffers",
-            // HRESULT=0x80070006, "WIM open failed with access denied."). Solo se
-            // toca la COPIA de trabajo: el archivo original (dentro de la ISO
-            // montada) nunca se modifica.
-            EnsureWritable(destinationBootWimPath);
-
             _logger.Info($"boot.wim copiado al workspace: '{destinationBootWimPath}'. La ISO original no se ha modificado.");
-            _logger.Info("boot.wim preparado para montaje.");
+
+            PrepareWorkingCopyForMount(destinationBootWimPath);
             return true;
         }
         finally
@@ -73,18 +72,31 @@ public sealed class BootWimProvisioner : IBootWimProvisioner
     }
 
     /// <summary>
-    /// Quita el atributo ReadOnly de la copia de trabajo si lo tiene. Idempotente:
-    /// si ya es escribible, no hace nada (ni falla). Nunca se llama sobre nada
-    /// dentro de una ISO montada -- solo sobre <paramref name="path"/>, que ya es
-    /// una copia independiente en el workspace.
+    /// Deja la COPIA DE TRABAJO lista para Mount-Wim: quita el atributo ReadOnly
+    /// si lo tiene (idempotente -- si ya es escribible, no hace nada ni falla).
+    /// <c>File.Copy</c> conserva los atributos del archivo origen, y como
+    /// <c>sources\boot.wim</c> siempre se lee de una ISO montada en SOLO LECTURA
+    /// (ya sea por este mismo método o por <c>IsoTreeCopier</c>, que copia el
+    /// árbol completo antes), cualquier copia nueva hereda ReadOnly -- DISM no
+    /// puede montarla en escritura hasta quitárselo ("Fail to flush file
+    /// buffers", HRESULT=0x80070006, "WIM open failed with access denied.").
+    /// Nunca se llama sobre nada dentro de una ISO montada, solo sobre
+    /// <paramref name="path"/>, que ya es una copia independiente en el workspace.
     /// </summary>
-    private void EnsureWritable(string path)
+    private void PrepareWorkingCopyForMount(string path)
     {
-        var attributes = File.GetAttributes(path);
-        if ((attributes & FileAttributes.ReadOnly) == 0)
-            return;
+        _logger.Info("Preparando boot.wim de trabajo...");
 
-        _logger.Info("Eliminando atributo ReadOnly de boot.wim...");
-        File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+        {
+            _logger.Info("Eliminando atributo ReadOnly de boot.wim...");
+            File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+            _logger.Info("OK boot.wim preparado para escritura.");
+        }
+        else
+        {
+            _logger.Info("OK boot.wim ya era writable.");
+        }
     }
 }

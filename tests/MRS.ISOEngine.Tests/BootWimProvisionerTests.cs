@@ -83,6 +83,29 @@ public sealed class BootWimProvisionerTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadOnly_is_removed_even_when_the_destination_already_exists_idempotent_path()
+    {
+        // P26: el bug real. IsoTreeCopier copia el árbol COMPLETO de la ISO
+        // (incluido sources\boot.wim) al workspace ANTES de que este método se
+        // invoque -- así que en el flujo real casi siempre entra por ESTA rama
+        // ("ya existe, no se vuelve a copiar"), no por la de copiar. Esa copia
+        // previa también hereda ReadOnly (mismo motivo que P25: File.Copy desde
+        // una ISO montada en solo lectura). P25 solo preparaba la rama de "copio
+        // yo mismo"; este archivo pre-existente debe prepararse igual.
+        var mounter = new FakeIsoMounter(_mountedIsoRoot);
+        var provisioner = new BootWimProvisioner(mounter);
+        var destination = Path.Combine(_dir, "workspace-preexisting", "sources", "boot.wim");
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        File.WriteAllBytes(destination, new byte[8192]);
+        File.SetAttributes(destination, File.GetAttributes(destination) | FileAttributes.ReadOnly);
+
+        var copied = await provisioner.EnsureBootWimCopyAsync("fake.iso", destination);
+
+        Assert.False(copied); // no se volvió a copiar (idempotente)
+        Assert.False(IsReadOnly(destination), "El atajo idempotente también debe preparar el archivo para montaje.");
+    }
+
+    [Fact]
     public async Task ReadOnly_attribute_is_removed_from_the_workspace_copy_but_never_from_the_source()
     {
         // Un archivo leído desde una ISO montada de solo lectura hereda ReadOnly

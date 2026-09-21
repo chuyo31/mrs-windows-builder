@@ -141,6 +141,32 @@ public sealed class InstallationImageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_boot_wim_already_placed_in_the_workspace_by_IsoTreeCopier_with_ReadOnly_still_mounts_successfully()
+    {
+        // P26: reproduce el bug real de producción. IsoGenerationPipeline ejecuta
+        // IsoTreeCopier (copia el árbol COMPLETO de la ISO, incluido
+        // sources\boot.wim) ANTES de invocar InstallationImageService -- así que
+        // en el flujo real, boot.wim casi siempre YA EXISTE en el workspace
+        // cuando BootWimProvisioner.EnsureBootWimCopyAsync se ejecuta, y entra por
+        // la rama idempotente ("no se vuelve a copiar"). File.Copy conserva
+        // ReadOnly del origen montado en solo lectura, así que ese archivo
+        // pre-copiado llega ReadOnly. P25 solo preparaba (quitaba ReadOnly) la
+        // rama de "copio yo mismo" -- este test simula exactamente lo que hace
+        // IsoTreeCopier antes de llamar a ApplyAsync, y habría fallado con P25.
+        Directory.CreateDirectory(Path.GetDirectoryName(_workspace.BootWimPath)!);
+        File.Copy(Path.Combine(_mountedIsoRoot, "sources", "boot.wim"), _workspace.BootWimPath);
+        File.SetAttributes(_workspace.BootWimPath, File.GetAttributes(_workspace.BootWimPath) | FileAttributes.ReadOnly);
+
+        var service = NewService();
+
+        var result = await service.ApplyAsync("fake-source.iso", _workspace, SafeOptions(), Account());
+
+        Assert.True(result.Success);
+        Assert.Contains(_dism.Calls, c => c.StartsWith("mount:"));
+        Assert.False((File.GetAttributes(_workspace.BootWimPath) & FileAttributes.ReadOnly) != 0);
+    }
+
+    [Fact]
     public async Task A_failed_run_preserves_the_workspace_directory()
     {
         _registry.LoadExitCode = 1; // fuerza un fallo dentro de BootWimModifier
