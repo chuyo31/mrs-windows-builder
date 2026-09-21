@@ -83,6 +83,50 @@ public sealed class BootWimProvisionerTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadOnly_attribute_is_removed_from_the_workspace_copy_but_never_from_the_source()
+    {
+        // Un archivo leído desde una ISO montada de solo lectura hereda ReadOnly
+        // al copiarlo con File.Copy; DISM no puede montar en escritura una copia
+        // con ese atributo (P25: "WIM open failed with access denied.",
+        // HRESULT=0x80070006) hasta quitárselo.
+        File.SetAttributes(_sourceBootWim, File.GetAttributes(_sourceBootWim) | FileAttributes.ReadOnly);
+        try
+        {
+            var mounter = new FakeIsoMounter(_mountedIsoRoot);
+            var provisioner = new BootWimProvisioner(mounter);
+            var destination = Path.Combine(_dir, "workspace-readonly", "sources", "boot.wim");
+
+            await provisioner.EnsureBootWimCopyAsync("fake.iso", destination);
+
+            Assert.False(IsReadOnly(destination), "La copia de trabajo no debe quedar ReadOnly.");
+            Assert.True(IsReadOnly(_sourceBootWim), "El archivo original (dentro de la ISO montada) nunca debe modificarse.");
+        }
+        finally
+        {
+            // Deja el archivo escribible para que Dispose() pueda borrar _dir.
+            File.SetAttributes(_sourceBootWim, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task A_writable_source_copies_without_error_ReadOnly_removal_is_idempotent()
+    {
+        // El origen ya es escribible (caso normal fuera de una ISO montada en
+        // solo lectura): quitar ReadOnly debe ser un no-op, sin fallar.
+        Assert.False(IsReadOnly(_sourceBootWim));
+        var mounter = new FakeIsoMounter(_mountedIsoRoot);
+        var provisioner = new BootWimProvisioner(mounter);
+        var destination = Path.Combine(_dir, "workspace-writable", "sources", "boot.wim");
+
+        var copied = await provisioner.EnsureBootWimCopyAsync("fake.iso", destination);
+
+        Assert.True(copied);
+        Assert.False(IsReadOnly(destination));
+    }
+
+    private static bool IsReadOnly(string path) => (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0;
+
+    [Fact]
     public async Task Never_writes_inside_the_mounted_source_ISO_root()
     {
         var mounter = new FakeIsoMounter(_mountedIsoRoot);

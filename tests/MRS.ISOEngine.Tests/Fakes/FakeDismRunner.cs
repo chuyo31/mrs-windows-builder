@@ -9,9 +9,14 @@ internal sealed class FakeDismRunner : IDismRunner
     public int MountExitCode { get; set; }
     public int UnmountDiscardExitCode { get; set; }
     public int UnmountCommitExitCode { get; set; }
+    public int ListExitCode { get; set; }
     public List<string> Calls { get; } = new();
 
-    public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, CancellationToken cancellationToken = default) => Result(0);
+    public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"list:{imagePath}");
+        return Result(ListExitCode);
+    }
     public Task<ProcessRunResult> GetWimInfoAsync(string imagePath, int index, CancellationToken cancellationToken = default) => Result(0);
     public Task<ProcessRunResult> ExportImageAsync(string sourceImageFile, int sourceIndex, string destinationImageFile, string? destinationName = null, CancellationToken cancellationToken = default) => Result(0);
     public Task<ProcessRunResult> GetMountedWimInfoAsync(CancellationToken cancellationToken = default) => Result(0);

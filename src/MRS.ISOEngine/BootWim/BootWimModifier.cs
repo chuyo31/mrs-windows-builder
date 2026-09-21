@@ -11,6 +11,12 @@ namespace MRS.ISOEngine.BootWim;
 /// <summary>Implementación de <see cref="IBootWimModifier"/>. Ver la interfaz para el ciclo completo.</summary>
 public sealed class BootWimModifier : IBootWimModifier
 {
+    // P25: umbral de cordura, no un tamaño real de boot.wim (que ronda cientos de
+    // MB) -- solo para descartar un archivo vacío/truncado antes de intentar
+    // montarlo, sin exigir un tamaño "de verdad" que un WIM legítimo más pequeño
+    // pudiera no alcanzar.
+    private const long MinimumPlausibleBootWimSizeBytes = 4096;
+
     private readonly IDismRunner _dism;
     private readonly IOfflineRegistryEditor _registry;
     private readonly LabConfigApplier _labConfigApplier;
@@ -36,8 +42,7 @@ public sealed class BootWimModifier : IBootWimModifier
         const string compatStage = "Aplicando compatibilidad";
         const string validatingStage = "Validando configuración";
 
-        if (!File.Exists(bootWimPath))
-            throw new IsoEngineException($"No se encuentra boot.wim en el workspace: '{bootWimPath}'.");
+        await ValidateBeforeMountAsync(bootWimPath, cancellationToken).ConfigureAwait(false);
 
         Directory.CreateDirectory(mountDir);
 
@@ -128,5 +133,39 @@ public sealed class BootWimModifier : IBootWimModifier
         }
 
         return new BootWimModificationResult(success, applied, errors);
+    }
+
+    /// <summary>
+    /// P25: comprobaciones baratas antes de invocar Mount-Wim, en el orden de
+    /// coste creciente (existencia/tamaño/atributos son solo E/S local; la
+    /// consulta a DISM es la única que cuesta un proceso externo, así que se
+    /// hace la última y solo si las anteriores ya pasaron). Reutiliza
+    /// <see cref="IDismRunner.GetWimInfoAsync(string, CancellationToken)"/>
+    /// (ya usado en otros motores, p. ej. el preflight de RemovalEngine) en vez
+    /// de duplicar una comprobación de validez de WIM propia.
+    /// </summary>
+    private async Task ValidateBeforeMountAsync(string bootWimPath, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(bootWimPath))
+            throw new IsoEngineException($"No se encuentra boot.wim en el workspace: '{bootWimPath}'.");
+
+        var info = new FileInfo(bootWimPath);
+        if (info.Length < MinimumPlausibleBootWimSizeBytes)
+            throw new IsoEngineException(
+                $"boot.wim en el workspace es sospechosamente pequeño ({info.Length} bytes); no se intentará montar.");
+
+        // No debería ocurrir nunca -- BootWimProvisioner ya quita ReadOnly de la
+        // copia de trabajo al crearla -- pero si algo distinto dejó este archivo
+        // en ese estado, es mejor fallar aquí con un mensaje claro que dejar que
+        // DISM lo intente y falle con "WIM open failed with access denied."
+        if ((info.Attributes & FileAttributes.ReadOnly) != 0)
+            throw new IsoEngineException(
+                $"boot.wim en el workspace todavía tiene el atributo ReadOnly: '{bootWimPath}'. No se intentará montar.");
+
+        _logger.Info("Validando boot.wim antes de montarlo...");
+        var wimInfo = await _dism.GetWimInfoAsync(bootWimPath, cancellationToken).ConfigureAwait(false);
+        if (!wimInfo.Succeeded)
+            throw new IsoEngineException(
+                $"boot.wim en el workspace no es un WIM válido (DISM /Get-WimInfo ExitCode {wimInfo.ExitCode}).", wimInfo.ExitCode);
     }
 }

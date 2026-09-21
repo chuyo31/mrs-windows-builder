@@ -27,7 +27,11 @@ public sealed class InstallationImageServiceTests : IDisposable
 
         _mountedIsoRoot = Path.Combine(_dir, "mounted-iso");
         Directory.CreateDirectory(Path.Combine(_mountedIsoRoot, "sources"));
-        File.WriteAllText(Path.Combine(_mountedIsoRoot, "sources", "boot.wim"), "fake boot.wim original");
+        // P25: ValidateBeforeMountAsync exige un tamaño mínimo de cordura antes
+        // de Mount-Wim; se repite el contenido para superarlo sin dejar de ser
+        // legible como texto (se compara con File.ReadAllText más abajo).
+        File.WriteAllText(Path.Combine(_mountedIsoRoot, "sources", "boot.wim"),
+            string.Concat(Enumerable.Repeat("fake boot.wim original ", 300)));
 
         var workspaceRoot = Path.Combine(_dir, "workspace");
         Directory.CreateDirectory(Path.Combine(workspaceRoot, "sources"));

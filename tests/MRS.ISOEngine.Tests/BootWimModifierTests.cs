@@ -21,7 +21,10 @@ public sealed class BootWimModifierTests : IDisposable
     {
         Directory.CreateDirectory(_dir);
         _bootWimPath = Path.Combine(_dir, "boot.wim");
-        File.WriteAllText(_bootWimPath, "fake boot.wim");
+        // P25: ValidateBeforeMountAsync exige un tamaño mínimo de cordura antes
+        // de intentar Mount-Wim; el fixture debe superarlo para que estos tests
+        // seleccionen el mismo camino que antes (mount -> hive -> commit/discard).
+        File.WriteAllBytes(_bootWimPath, new byte[8192]);
         _mountDir = Path.Combine(_dir, "mount");
     }
 
@@ -94,6 +97,61 @@ public sealed class BootWimModifierTests : IDisposable
             () => modifier.ApplyLabConfigAsync(missingPath, 1, InstallationOptionsModel.Default, _mountDir));
 
         Assert.Empty(dism.Calls);
+    }
+
+    [Fact]
+    public async Task A_suspiciously_small_boot_wim_throws_before_mounting_anything()
+    {
+        var dism = new FakeDismRunner();
+        var registry = new FakeOfflineRegistryEditor();
+        var modifier = new BootWimModifier(dism, registry);
+        var tinyPath = Path.Combine(_dir, "tiny-boot.wim");
+        File.WriteAllBytes(tinyPath, new byte[10]);
+
+        await Assert.ThrowsAsync<IsoEngineException>(
+            () => modifier.ApplyLabConfigAsync(tinyPath, 1, InstallationOptionsModel.Default, _mountDir));
+
+        Assert.Empty(dism.Calls);
+    }
+
+    [Fact]
+    public async Task A_boot_wim_still_marked_ReadOnly_throws_before_mounting_anything()
+    {
+        // No debería ocurrir nunca en la práctica (BootWimProvisioner ya lo
+        // arregla al copiar), pero si ocurriera, debe fallar aquí con un mensaje
+        // claro en vez de dejar que DISM lo intente ("access denied").
+        var dism = new FakeDismRunner();
+        var registry = new FakeOfflineRegistryEditor();
+        var modifier = new BootWimModifier(dism, registry);
+        var readOnlyPath = Path.Combine(_dir, "readonly-boot.wim");
+        File.WriteAllBytes(readOnlyPath, new byte[8192]);
+        File.SetAttributes(readOnlyPath, File.GetAttributes(readOnlyPath) | FileAttributes.ReadOnly);
+
+        try
+        {
+            await Assert.ThrowsAsync<IsoEngineException>(
+                () => modifier.ApplyLabConfigAsync(readOnlyPath, 1, InstallationOptionsModel.Default, _mountDir));
+
+            Assert.Empty(dism.Calls);
+        }
+        finally
+        {
+            File.SetAttributes(readOnlyPath, FileAttributes.Normal); // para que Dispose() pueda borrar _dir
+        }
+    }
+
+    [Fact]
+    public async Task DISM_reporting_an_invalid_WIM_throws_before_mounting_anything()
+    {
+        var dism = new FakeDismRunner { ListExitCode = 87 };
+        var registry = new FakeOfflineRegistryEditor();
+        var modifier = new BootWimModifier(dism, registry);
+
+        await Assert.ThrowsAsync<IsoEngineException>(
+            () => modifier.ApplyLabConfigAsync(_bootWimPath, 1, InstallationOptionsModel.Default, _mountDir));
+
+        Assert.Contains(dism.Calls, c => c.StartsWith("list:"));
+        Assert.DoesNotContain(dism.Calls, c => c.StartsWith("mount:"));
     }
 
     [Fact]
