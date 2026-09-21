@@ -127,11 +127,13 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
             progress?.Report(InstallationProgressInfo.Create(installWimStage, 57, "Montando la ISO de origen para exportar install.wim..."));
             var isoMount = await _isoMounter.MountAsync(request.SourceIsoPath, cancellationToken).ConfigureAwait(false);
 
+            string? sourceInstallWimPath = null;
             MRS.RemovalEngine.Models.WorkingImage workingImage;
             MRS.RemovalEngine.Models.RemovalExecutionResult removalResult;
             try
             {
                 var sourceInstallWim = FindInstallWim(isoMount.RootPath);
+                sourceInstallWimPath = sourceInstallWim;
                 if (sourceInstallWim is null)
                 {
                     const string message = @"La ISO no contiene sources\install.wim ni sources\install.esd.";
@@ -171,6 +173,23 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
             // El install.wim modificado vive en el workspace propio de
             // WorkingImageFactory (P07); se copia al workspace de generación de
             // P19 para que quede junto a boot.wim/$OEM$/autounattend.xml.
+            _logger.Info($"[INSTALL] Source install.wim (ISO original, montada de solo lectura): '{sourceInstallWimPath}'");
+            _logger.Info($"[INSTALL] Working install.wim (WorkingImageFactory + RemovalEngine): '{workingImage.WorkingWimPath}'");
+            _logger.Info($"[INSTALL] Final ISO install.wim (workspace de generación): '{workspace.InstallWimPath}'");
+
+            // P27: sources\install.wim en el workspace de generación ya lo copió
+            // IsoTreeCopier (junto con el resto del árbol de la ISO, antes de
+            // llegar aquí) desde la ISO montada en solo lectura -- igual que
+            // boot.wim en P25/P26, esa copia hereda el atributo ReadOnly.
+            // File.Copy con overwrite:true NO lo quita por sí solo: falla con
+            // "Access to the path ... is denied." al intentar sustituirlo por la
+            // imagen de trabajo ya terminada. Se prepara aquí, justo antes de la
+            // sustitución final -- solo sobre la copia del workspace de
+            // generación, nunca sobre la ISO montada ni sobre la imagen de
+            // trabajo de WorkingImageFactory, y solo después de que
+            // removalResult.Success ya sea true (la sustitución nunca ocurre si
+            // la imagen de trabajo no terminó correctamente).
+            EnsureInstallWimDestinationWritable(workspace.InstallWimPath);
             File.Copy(workingImage.WorkingWimPath, workspace.InstallWimPath, overwrite: true);
             appliedLines.Add($"[INSTALL] install.wim exportado (índice {request.EditionIndex}) con {removalResult.ActionsExecuted.Count} acción(es) aplicada(s)");
             progress?.Report(InstallationProgressInfo.Create(installWimStage, 80, "install.wim modificado", InstallationProgressLevel.Success));
@@ -261,6 +280,28 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
             errors.Add(ex.Message);
             return new IsoGenerationResult(false, null, workspace, appliedLines, errors);
         }
+    }
+
+    /// <summary>
+    /// P27: quita ReadOnly de <c>workspace\sources\install.wim</c> si lo tiene,
+    /// antes de sustituirlo por la imagen de trabajo ya terminada. Idempotente
+    /// (si ya es escribible, o si el archivo todavía no existe, no hace nada).
+    /// Nunca se llama sobre la ISO montada ni sobre la imagen de trabajo de
+    /// WorkingImageFactory -- solo sobre esta ruta concreta del workspace de
+    /// generación (mismo patrón que <c>BootWimProvisioner.PrepareWorkingCopyForMount</c>,
+    /// P25/P26, aplicado aquí a la sustitución final en vez de al premontaje).
+    /// </summary>
+    private void EnsureInstallWimDestinationWritable(string path)
+    {
+        if (!File.Exists(path))
+            return;
+
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReadOnly) == 0)
+            return;
+
+        _logger.Info("Eliminando atributo ReadOnly de install.wim en el workspace de generación...");
+        File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
     }
 
     private static string? FindInstallWim(string mountRoot)

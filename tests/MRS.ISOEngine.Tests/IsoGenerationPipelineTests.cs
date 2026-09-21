@@ -192,6 +192,99 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task A_ReadOnly_install_wim_inherited_from_the_ISO_tree_copy_with_zero_eliminations_still_completes()
+    {
+        // P27: reproduce el bug real. IsoTreeCopier ya copia sources\install.wim
+        // al workspace de generación (heredando ReadOnly de la ISO montada en
+        // solo lectura) ANTES de que WorkingImageFactory/RemovalEngine terminen
+        // su propia copia de trabajo independiente. La sustitución final
+        // (File.Copy con overwrite:true sobre esa ruta del workspace) fallaba
+        // con "Access to the path ... is denied." porque .NET no quita ReadOnly
+        // por sí solo al sobrescribir. Caso con 0 eliminaciones.
+        var mountedInstallWim = Path.Combine(_mountedIsoRoot, "sources", "install.wim");
+        File.SetAttributes(mountedInstallWim, File.GetAttributes(mountedInstallWim) | FileAttributes.ReadOnly);
+        try
+        {
+            var pipeline = NewPipeline();
+            var request = ValidRequest() with { RemovalPlan = new RemovalPlan() };
+
+            var result = await pipeline.GenerateAsync(request);
+
+            Assert.True(result.Success);
+            Assert.Equal(0, request.RemovalPlan!.TotalSelected);
+            var finalInstallWimPath = Path.Combine(result.Workspace!.WorkspacePath, "sources", "install.wim");
+            Assert.Equal(File.ReadAllText(_modifiedInstallWim), File.ReadAllText(finalInstallWimPath));
+        }
+        finally
+        {
+            File.SetAttributes(mountedInstallWim, FileAttributes.Normal); // para que Dispose() pueda borrar _dir
+        }
+    }
+
+    [Fact]
+    public async Task A_ReadOnly_install_wim_inherited_from_the_ISO_tree_copy_with_eliminations_still_completes()
+    {
+        // P27: mismo escenario que el test anterior, pero con un RemovalPlan
+        // que sí contiene acciones (TotalSelected > 0) -- el bug de ReadOnly es
+        // independiente de si hubo eliminaciones o no: ocurre siempre en la
+        // sustitución final, después de que RemovalEngine (real o simulado)
+        // ya terminó con éxito.
+        var mountedInstallWim = Path.Combine(_mountedIsoRoot, "sources", "install.wim");
+        File.SetAttributes(mountedInstallWim, File.GetAttributes(mountedInstallWim) | FileAttributes.ReadOnly);
+        try
+        {
+            var pipeline = NewPipeline();
+            var clipchamp = new RemovalPlanItem
+            {
+                ComponentId = "appx:Clipchamp",
+                DisplayName = "Clipchamp",
+                Allowed = true,
+                Requested = true,
+            };
+            var plan = new RemovalPlan { Components = new[] { clipchamp } };
+            var request = ValidRequest() with { RemovalPlan = plan };
+
+            var result = await pipeline.GenerateAsync(request);
+
+            Assert.True(result.Success);
+            Assert.Equal(1, plan.TotalSelected);
+            Assert.NotNull(_removalEngine.LastPlan);
+            var finalInstallWimPath = Path.Combine(result.Workspace!.WorkspacePath, "sources", "install.wim");
+            Assert.Equal(File.ReadAllText(_modifiedInstallWim), File.ReadAllText(finalInstallWimPath));
+        }
+        finally
+        {
+            File.SetAttributes(mountedInstallWim, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task The_mounted_ISO_install_wim_is_never_written_to_during_the_final_substitution()
+    {
+        // P27: el original (dentro de la ISO montada) nunca se toca -- solo la
+        // copia del workspace de generación. Se confirma con el contenido Y con
+        // que el atributo ReadOnly del "original" sigue intacto tras el run.
+        var mountedInstallWim = Path.Combine(_mountedIsoRoot, "sources", "install.wim");
+        var originalContent = File.ReadAllText(mountedInstallWim);
+        File.SetAttributes(mountedInstallWim, File.GetAttributes(mountedInstallWim) | FileAttributes.ReadOnly);
+        try
+        {
+            var pipeline = NewPipeline();
+            var request = ValidRequest() with { RemovalPlan = new RemovalPlan() };
+
+            await pipeline.GenerateAsync(request);
+
+            Assert.Equal(originalContent, File.ReadAllText(mountedInstallWim));
+            Assert.True((File.GetAttributes(mountedInstallWim) & FileAttributes.ReadOnly) != 0,
+                "El ReadOnly del install.wim 'original' (ISO montada) nunca debe quitarse.");
+        }
+        finally
+        {
+            File.SetAttributes(mountedInstallWim, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
     public async Task Disabled_PostInstall_never_calls_the_package_builder()
     {
         var pipeline = NewPipeline();
