@@ -21,9 +21,22 @@ namespace MRS.ISOEngine.Autounattend;
 /// pasado por línea de comandos a Setup), ese archivo tiene prioridad: Setup
 /// solo consulta el que encuentra primero según su orden de búsqueda estándar,
 /// así que MRS nunca debería sobrescribir uno que el usuario ya haya puesto.
-/// Este autounattend controla únicamente el paso <c>oobeSystem</c> (cuenta
-/// local, nombre de equipo, y las pantallas de OOBE que se ocultan); no toca
-/// las fases <c>windowsPE</c>/<c>specialize</c>.
+/// Este autounattend controla el paso <c>oobeSystem</c> (cuenta local, nombre
+/// de equipo, y las pantallas de OOBE que se ocultan) y, si
+/// <c>allowOfflineOobe</c> está activo, también el paso <c>specialize</c>
+/// (P28): las opciones de <c>oobeSystem</c> por sí solas
+/// (<c>HideOnlineAccountScreens</c>/<c>HideWirelessSetupInOOBE</c>) ocultan las
+/// pantallas de cuenta en línea, pero no evitan la pantalla previa "Vamos a
+/// conectarte a una red" — esa pantalla depende de
+/// <c>HKLM\SYSTEM\Setup\OOBE\BypassNRO</c> en el sistema YA INSTALADO (el mismo
+/// valor que deja <c>OOBE\BYPASSNRO.cmd</c> al ejecutarse manualmente), que
+/// todavía no existe en ese momento porque install.wim aún no se ha aplicado a
+/// disco. <c>specialize</c> es el paso de Setup que se ejecuta después de
+/// aplicar la imagen y antes de que arranque OOBE, así que es el punto
+/// correcto (y documentado por el propio esquema de unattend, componente
+/// <c>Microsoft-Windows-Deployment</c>/<c>RunSynchronous</c>) para dejarlo ya
+/// puesto de forma automática — sin ninguna intervención manual del usuario
+/// durante OOBE. No se toca la fase <c>windowsPE</c>.
 /// </summary>
 public static class AutounattendGenerator
 {
@@ -104,8 +117,36 @@ public static class AutounattendGenerator
             shellSetup);
 
         var root = new XElement(Ns + "unattend",
-            new XAttribute(XNamespace.Xmlns + "wcm", WcmNs),
-            settingsOobeSystem);
+            new XAttribute(XNamespace.Xmlns + "wcm", WcmNs));
+
+        // P28: BypassNRO debe quedar puesto en el sistema instalado ANTES de que
+        // arranque OOBE. specialize es el primer paso de Setup que se ejecuta ya
+        // sobre ese sistema (tras aplicar install.wim, antes de OOBE) — el punto
+        // documentado del esquema de unattend para esto, no un hack de UI.
+        if (allowOfflineOobe)
+        {
+            var runBypassNro = new XElement(Ns + "RunSynchronousCommand",
+                new XAttribute(WcmNs + "action", "add"),
+                new XElement(Ns + "Order", "1"),
+                new XElement(Ns + "Path", @"reg add HKLM\SYSTEM\Setup\OOBE /v BypassNRO /t REG_DWORD /d 1 /f"),
+                new XElement(Ns + "Description", "Bypass network requirement for OOBE"));
+
+            var deploymentComponent = new XElement(Ns + "component",
+                new XAttribute("name", "Microsoft-Windows-Deployment"),
+                new XAttribute("processorArchitecture", "amd64"),
+                new XAttribute("publicKeyToken", "31bf3856ad364e35"),
+                new XAttribute("language", "neutral"),
+                new XAttribute("versionScope", "nonSxS"),
+                new XElement(Ns + "RunSynchronous", runBypassNro));
+
+            var settingsSpecialize = new XElement(Ns + "settings",
+                new XAttribute("pass", "specialize"),
+                deploymentComponent);
+
+            root.Add(settingsSpecialize);
+        }
+
+        root.Add(settingsOobeSystem);
 
         var document = new XDocument(new XDeclaration("1.0", "utf-8", null), root);
         return document.Declaration + Environment.NewLine + document.ToString(SaveOptions.None);

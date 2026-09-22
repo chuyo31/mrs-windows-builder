@@ -87,6 +87,24 @@ public sealed class IsoGenerationPipelineTests : IDisposable
         Assert.Equal(1, _workingImageFactory.CallCount);
         Assert.Equal(1, _removalEngine.CallCount);
         Assert.Equal(1, _oscdimgRunner.CallCount);
+        Assert.Equal(1, _installationImageService.ValidateFinalCallCount);
+    }
+
+    [Fact]
+    public async Task A_failed_final_compatibility_validation_aborts_before_oscdimg()
+    {
+        // P28: la re-verificación final (boot.wim índices 1/2 + autounattend.xml)
+        // puede fallar incluso si PrepareBootWim reportó éxito -- nunca debe
+        // llegar a generar una ISO final en ese caso.
+        _installationImageService.FinalValidationSuccess = false;
+        _installationImageService.FinalValidationErrors = new[] { "boot.wim Index 2: BypassTPMCheck missing" };
+        var pipeline = NewPipeline();
+
+        var result = await pipeline.GenerateAsync(ValidRequest());
+
+        Assert.False(result.Success);
+        Assert.Contains("boot.wim Index 2: BypassTPMCheck missing", result.Errors);
+        Assert.Equal(0, _oscdimgRunner.CallCount);
     }
 
     [Fact]

@@ -13,11 +13,11 @@ namespace MRS.ISOEngine.Configuration;
 /// desactivada se elimina explícitamente si existía de una ejecución anterior
 /// (idempotencia — sección 11: "opciones desactivadas no aparecen").
 ///
-/// <see cref="ApplyOfflineOobeBypassAsync"/> está deliberadamente separado del
-/// flujo principal: el mecanismo (BypassNRO) está implementado, pero P16 no pudo
-/// confirmar su fiabilidad en la build objetivo dentro de esta sesión (sin
-/// elevación disponible para probarlo) — ver prompts/16-resultado.md. No se
-/// invoca automáticamente desde <see cref="ApplyAsync"/>.
+/// <see cref="ApplyOfflineOobeBypassAsync"/> aplica BypassNRO (P28): se invoca
+/// explícitamente desde <see cref="BootWim.BootWimModifier"/> solo sobre el
+/// índice de boot.wim que corresponde a Windows Setup (índice 2, confirmado
+/// con auditoría real de un ISO generado por MRS — ver prompts/28-resultado.md),
+/// nunca automáticamente para todos los índices ni desde <see cref="ApplyAsync"/>.
 /// </summary>
 public sealed class LabConfigApplier
 {
@@ -82,9 +82,12 @@ public sealed class LabConfigApplier
     }
 
     /// <summary>
-    /// Mecanismo de OOBE sin conexión (BypassNRO), pendiente de confirmación fiable
-    /// en esta build (P16, sección 7). No forma parte de <see cref="ApplyAsync"/>;
-    /// solo invocable explícitamente una vez confirmado.
+    /// Aplica <c>HKLM\SYSTEM\Setup\OOBE\BypassNRO=1</c> (P28): el mismo valor que
+    /// deja <c>OOBE\BYPASSNRO.cmd</c> al ejecutarse manualmente durante OOBE, pero
+    /// aplicado offline antes de que Setup arranque siquiera — así no depende de
+    /// ninguna intervención manual. Se invoca únicamente sobre el índice de
+    /// boot.wim de Windows Setup (nunca sobre WinPE ni automáticamente para todos
+    /// los índices).
     /// </summary>
     public async Task<bool> ApplyOfflineOobeBypassAsync(string hiveKeyName, CancellationToken cancellationToken = default)
     {
@@ -94,9 +97,30 @@ public sealed class LabConfigApplier
             .ConfigureAwait(false);
 
         if (result.Succeeded)
-            _logger.Info("[COMPAT] BypassNRO applied (pendiente de confirmación fiable en esta build)");
+            _logger.Info("[COMPAT] BypassNRO applied");
 
         return result.Succeeded;
+    }
+
+    /// <summary>
+    /// Lee, con el hive ya cargado, que <c>BypassNRO</c> quedó realmente presente
+    /// (P28): igual que <see cref="VerifyAsync"/>, nunca se acepta como éxito que
+    /// DISM/reg.exe terminaran sin error — se confirma leyendo el valor de vuelta.
+    /// </summary>
+    public async Task<Models.WorkspaceValidationResult> VerifyOfflineOobeBypassAsync(
+        string hiveKeyName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hiveKeyName);
+
+        var query = await _registry.QueryValueAsync(hiveKeyName, OobeSubKeyPath, BypassNroValueName, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!query.Succeeded)
+            return new Models.WorkspaceValidationResult(
+                false, new[] { "BypassNRO debería estar aplicado pero no se encontró en el registro offline." });
+
+        _logger.Info("[COMPAT] BypassNRO verified");
+        return Models.WorkspaceValidationResult.Valid;
     }
 
     /// <summary>

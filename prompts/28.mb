@@ -1,0 +1,280 @@
+# P28 — Corrección real de Bypass Hardware + OOBE Offline
+
+Tenemos evidencia real obtenida del ISO generado por MRS.
+
+ISO probado:
+C:\Users\B3RASCASA\Desktop\26300.8697.260612-2005.GE_PRERELEASE_IM_CLIENTMULTI_X64FRE_ES-ES-MRS.iso
+
+Resultado de auditoría:
+
+boot.wim:
+- Index 1 = Microsoft Windows PE (x64)
+- Index 2 = Microsoft Windows Setup (x64)
+
+LabConfig REAL del ISO:
+Index 1:
+  BypassTPMCheck = 1
+  BypassSecureBootCheck = 1
+  BypassCPUCheck = 1
+  BypassRAMCheck = 1
+
+Index 2:
+  LabConfig NO EXISTE
+
+Por tanto, el bypass hardware actual NO está aplicado al entorno Windows Setup (Index 2).
+
+Además, el ISO contiene:
+D:\autounattend.xml
+
+Contenido actual:
+- pass="oobeSystem"
+- HideEULAPage=true
+- HideOEMRegistrationScreen=true
+- HideOnlineAccountScreens=true
+- HideWirelessSetupInOOBE=true
+- ProtectYourPC=3
+- NetworkLocation=Home
+- LocalAccount "Usuario"
+- Grupo Administrators
+
+Sin embargo, al instalar el ISO en VirtualBox Windows sigue mostrando:
+"Vamos a conectarte a una red"
+
+Por tanto, la configuración offline/OOBE actual tampoco está produciendo el comportamiento esperado.
+
+OBJETIVO:
+Corregir estos dos problemas sin rehacer la arquitectura existente.
+
+==================================================
+1. LABCONFIG
+==================================================
+
+Modificar la implementación actual de:
+- BootWimProvisioner
+- BootWimModifier
+- LabConfigApplier
+- OfflineRegistryEditor
+
+para que LabConfig quede aplicado en el/los índices necesarios del boot.wim, especialmente:
+
+Index 2 = Microsoft Windows Setup (x64)
+
+Debe quedar verificable físicamente:
+
+HKLM\SYSTEM\Setup\LabConfig
+
+BypassTPMCheck = DWORD 1
+BypassSecureBootCheck = DWORD 1
+BypassCPUCheck = DWORD 1
+BypassRAMCheck = DWORD 1
+
+Mantener idempotencia.
+
+Después de modificar cada índice:
+- montar;
+- cargar SYSTEM;
+- verificar valores;
+- desmontar;
+- registrar resultado.
+
+NO aceptar como éxito únicamente que DISM termine correctamente.
+
+==================================================
+2. AUTOUNATTEND
+==================================================
+
+Auditar AutounattendGenerator.
+
+El XML actual solamente contiene:
+
+<settings pass="oobeSystem">
+
+y Windows está ignorando/no aplicando parte de la configuración esperada.
+
+Determinar qué configuración debe estar en:
+- windowsPE
+- specialize
+- oobeSystem
+
+para conseguir el objetivo configurado por InstallationOptions:
+
+LocalAccount = true
+OfflineOobe = true
+RequireInternet = false
+
+La solución debe funcionar automáticamente durante Windows Setup.
+
+No depender de:
+- Shift+F10
+- OOBE\BYPASSNRO
+- start ms-cxh:localonly
+- intervención manual
+
+Esos comandos pueden utilizarse como referencia de comportamiento, pero no como solución final.
+
+==================================================
+3. CUENTA LOCAL
+==================================================
+
+Mantener creación de cuenta local.
+
+No introducir contraseña fija/hardcodeada.
+
+La cuenta debe poder crearse automáticamente durante OOBE.
+
+Mantener:
+Name = Usuario
+Group = Administrators
+
+salvo que la arquitectura actual utilice estos valores desde configuración.
+
+==================================================
+4. INTERNET / OOBE
+==================================================
+
+Investigar específicamente por qué:
+
+<HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+<HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+
+no están evitando que aparezca:
+
+"Vamos a conectarte a una red"
+
+No asumir que simplemente añadir más XML resolverá el problema.
+
+Revisar:
+- namespace;
+- componentes;
+- pass correcto;
+- ubicación del autounattend;
+- compatibilidad con el build Windows 11 26H2;
+- si Setup está leyendo el archivo;
+- si ciertas opciones necesitan estar en windowsPE o specialize.
+
+Implementar la solución compatible con la arquitectura actual.
+
+==================================================
+5. VALIDACIÓN DEL ISO REAL
+==================================================
+
+Añadir validación al pipeline final.
+
+Debe comprobar:
+
+BOOT.WIM INDEX 1:
+  LabConfig → valores correctos
+
+BOOT.WIM INDEX 2:
+  LabConfig → valores correctos
+
+AUTOUNATTEND.XML:
+  existe
+  XML válido
+  LocalAccount configurada
+  OfflineOobe configurado
+  Microsoft Account no requerido
+  Internet no requerido
+
+Los logs deben mostrar explícitamente:
+
+[OK] boot.wim Index 1 LabConfig
+[OK] boot.wim Index 2 LabConfig
+[OK] autounattend.xml found
+[OK] autounattend.xml valid
+[OK] local account configured
+[OK] offline OOBE configured
+
+==================================================
+6. TESTS
+==================================================
+
+Añadir tests específicos para:
+
+- LabConfig Index 1
+- LabConfig Index 2
+- valores Bypass*
+- idempotencia
+- autounattend windowsPE
+- autounattend oobeSystem
+- LocalAccount
+- Offline OOBE
+- validación XML
+- validación final del ISO
+
+No modificar tests para ocultar fallos.
+
+Ejecutar:
+
+dotnet test
+dotnet build
+
+Todos deben quedar verdes.
+
+==================================================
+7. IMPORTANTE
+==================================================
+
+NO modificar:
+- RemovalEngine
+- Inventory
+- Catalog
+- ProfileEngine
+- componentes de eliminación
+
+salvo que sea estrictamente necesario para esta integración.
+
+NO introducir hacks frágiles.
+
+NO depender de comandos manuales durante OOBE.
+
+La solución debe formar parte del ISO generado por MRS.
+
+==================================================
+8. PRUEBA REAL POSTERIOR
+==================================================
+
+Una vez completado P28, la prueba será deliberadamente exigente:
+
+VirtualBox:
+
+RAM = 2048 MB
+CPU = 2
+TPM = DESACTIVADO
+Secure Boot = DESACTIVADO
+EFI/UEFI = ACTIVADO
+Windows 11 64-bit
+
+Resultado esperado:
+
+- Setup no bloquea por TPM
+- Setup no bloquea por Secure Boot
+- Setup no bloquea por CPU
+- Setup no bloquea por RAM
+- no exige conexión a Internet
+- no exige cuenta Microsoft
+- permite/crea la cuenta local
+- instalación continúa normalmente
+
+==================================================
+9. RESULTADO
+==================================================
+
+Crear:
+
+prompts\28-resultado.md
+
+Incluir:
+- causa encontrada;
+- índices modificados;
+- cambios realizados;
+- estructura final de autounattend;
+- validaciones;
+- tests;
+- build;
+- resultado;
+- commit recomendado.
+
+Al terminar, mostrar un resumen corto.
+
+No realizar cambios fuera de P28.

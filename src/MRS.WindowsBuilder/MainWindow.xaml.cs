@@ -131,7 +131,7 @@ public partial class MainWindow : Window
         var registryEditor = new OfflineRegistryEditor(processRunner);
         var bootWimProvisioner = new BootWimProvisioner(_isoMounter, _logger);
         var bootWimModifier = new BootWimModifier(dismRunner, registryEditor, _logger);
-        var installationImageService = new InstallationImageService(bootWimProvisioner, bootWimModifier, _logger);
+        var installationImageService = new InstallationImageService(bootWimProvisioner, bootWimModifier, dismRunner, registryEditor, _logger);
         var treeCopier = new IsoTreeCopier(_isoMounter, _logger);
         var postInstallPackageBuilder = new PostInstallPackageBuilder(_logger);
         var oscdimgRunner = new OscdimgRunner(processRunner);

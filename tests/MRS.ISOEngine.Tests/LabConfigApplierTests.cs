@@ -162,4 +162,34 @@ public sealed class LabConfigApplierTests
 
         Assert.Null(_registry.GetValue(HiveKey, "Setup\\OOBE", "BypassNRO"));
     }
+
+    [Fact]
+    public async Task ApplyOfflineOobeBypassAsync_sets_BypassNRO_to_1()
+    {
+        var applied = await _applier.ApplyOfflineOobeBypassAsync(HiveKey);
+
+        Assert.True(applied);
+        Assert.Equal(1, _registry.GetValue(HiveKey, "Setup\\OOBE", "BypassNRO"));
+    }
+
+    [Fact]
+    public async Task VerifyOfflineOobeBypassAsync_succeeds_after_ApplyOfflineOobeBypassAsync()
+    {
+        await _applier.ApplyOfflineOobeBypassAsync(HiveKey);
+
+        var result = await _applier.VerifyOfflineOobeBypassAsync(HiveKey);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task VerifyOfflineOobeBypassAsync_fails_when_BypassNRO_was_never_applied()
+    {
+        // P28: nunca se acepta como éxito que DISM/reg.exe terminaran sin error --
+        // se confirma leyendo el valor de vuelta.
+        var result = await _applier.VerifyOfflineOobeBypassAsync(HiveKey);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("BypassNRO"));
+    }
 }

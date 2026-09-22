@@ -32,7 +32,8 @@ public sealed class BootWimModifier : IBootWimModifier
 
     public async Task<BootWimModificationResult> ApplyLabConfigAsync(
         string bootWimPath, int index, InstallationOptionsModel options, string mountDir,
-        CancellationToken cancellationToken = default, IProgress<InstallationProgressInfo>? progress = null)
+        CancellationToken cancellationToken = default, IProgress<InstallationProgressInfo>? progress = null,
+        bool applyOfflineOobeBypass = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(bootWimPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(mountDir);
@@ -83,12 +84,31 @@ public sealed class BootWimModifier : IBootWimModifier
             progress?.Report(InstallationProgressInfo.Create(compatStage, 50, "Aplicando bypasses de compatibilidad..."));
             applied.AddRange(await _labConfigApplier.ApplyAsync(hiveKeyName, options, cancellationToken).ConfigureAwait(false));
 
+            if (applyOfflineOobeBypass)
+            {
+                progress?.Report(InstallationProgressInfo.Create(compatStage, 60, "Aplicando bypass de red offline (BypassNRO)..."));
+                var oobeApplied = await _labConfigApplier.ApplyOfflineOobeBypassAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+                if (!oobeApplied)
+                    throw new IsoEngineException("No se pudo aplicar BypassNRO (OOBE sin conexión) en boot.wim.");
+
+                applied.Add("[COMPAT] BypassNRO applied");
+            }
+
             progress?.Report(InstallationProgressInfo.Create(validatingStage, 75, "Verificando LabConfig..."));
             var verification = await _labConfigApplier.VerifyAsync(hiveKeyName, options, cancellationToken).ConfigureAwait(false);
-            if (!verification.IsValid)
-                errors.AddRange(verification.Errors);
+            var verificationErrors = new List<string>(verification.Errors);
 
-            success = verification.IsValid;
+            if (applyOfflineOobeBypass)
+            {
+                var oobeVerification = await _labConfigApplier.VerifyOfflineOobeBypassAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+                if (!oobeVerification.IsValid)
+                    verificationErrors.AddRange(oobeVerification.Errors);
+            }
+
+            if (verificationErrors.Count > 0)
+                errors.AddRange(verificationErrors);
+
+            success = verificationErrors.Count == 0;
         }
         catch (IsoEngineException ex)
         {

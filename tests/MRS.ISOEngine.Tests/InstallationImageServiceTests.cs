@@ -50,7 +50,11 @@ public sealed class InstallationImageServiceTests : IDisposable
     }
 
     private InstallationImageService NewService()
-        => new(new BootWimProvisioner(new FakeIsoMounter(_mountedIsoRoot)), new BootWimModifier(_dism, _registry));
+        // P28: se pasa siempre _dism/_registry (sobrecarga nueva) para que
+        // ValidateFinalAsync esté disponible en todos los tests, no solo en los
+        // que la ejercitan explícitamente -- el comportamiento de ApplyAsync no
+        // cambia por recibir estos dos parámetros adicionales.
+        => new(new BootWimProvisioner(new FakeIsoMounter(_mountedIsoRoot)), new BootWimModifier(_dism, _registry), _dism, _registry);
 
     private static AutounattendConfiguration Account() => new() { AccountName = "Usuario", ComputerName = "MRS-PC" };
 
@@ -164,6 +168,102 @@ public sealed class InstallationImageServiceTests : IDisposable
         Assert.True(result.Success);
         Assert.Contains(_dism.Calls, c => c.StartsWith("mount:"));
         Assert.False((File.GetAttributes(_workspace.BootWimPath) & FileAttributes.ReadOnly) != 0);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_applies_LabConfig_to_both_boot_wim_index_1_and_index_2()
+    {
+        // P28: auditoría real confirmó índice 1 = WinPE, índice 2 = Windows
+        // Setup -- el bypass de hardware solo surte efecto real si se aplica
+        // también al índice 2, que es donde Setup ejecuta la comprobación.
+        var service = NewService();
+
+        var result = await service.ApplyAsync("fake-source.iso", _workspace, SafeOptions(), Account());
+
+        Assert.True(result.Success);
+        Assert.Contains(_dism.Calls, c => c.StartsWith("mount:") && c.Contains(":1:"));
+        Assert.Contains(_dism.Calls, c => c.StartsWith("mount:") && c.Contains(":2:"));
+    }
+
+    [Fact]
+    public async Task AllowOfflineOobe_true_applies_BypassNRO_only_on_boot_wim_index_2()
+    {
+        var service = NewService();
+        var options = SafeOptions() with { AllowOfflineOobe = true };
+
+        var result = await service.ApplyAsync("fake-source.iso", _workspace, options, Account());
+
+        Assert.True(result.Success);
+        Assert.Contains(result.AppliedLogLines, l => l.Contains("BypassNRO"));
+
+        // El hive de cada índice usa una clave temporal distinta (GUID), así que
+        // se comprueba indirectamente: solo debe haber UNA operación "set" para
+        // BypassNRO en total (no una por índice).
+        var bypassNroSets = _registry.Calls.Count(c => c.StartsWith("set:") && c.Contains("BypassNRO"));
+        Assert.Equal(1, bypassNroSets);
+    }
+
+    [Fact]
+    public async Task AllowOfflineOobe_false_never_applies_BypassNRO()
+    {
+        var service = NewService();
+        var options = SafeOptions() with { AllowOfflineOobe = false };
+
+        var result = await service.ApplyAsync("fake-source.iso", _workspace, options, Account());
+
+        Assert.True(result.Success);
+        Assert.DoesNotContain(result.AppliedLogLines, l => l.Contains("BypassNRO"));
+        Assert.DoesNotContain(_registry.Calls, c => c.Contains("BypassNRO"));
+    }
+
+    [Fact]
+    public async Task ValidateFinalAsync_succeeds_after_a_successful_ApplyAsync()
+    {
+        // P28: re-verifica de forma independiente, volviendo a montar de solo
+        // lectura -- no se limita a devolver lo que ApplyAsync ya reportó.
+        var service = NewService();
+        var options = SafeOptions() with { AllowOfflineOobe = true };
+        var applyResult = await service.ApplyAsync("fake-source.iso", _workspace, options, Account());
+        Assert.True(applyResult.Success);
+
+        var validation = await service.ValidateFinalAsync(_workspace, options);
+
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors));
+        // Confirma que sí volvió a montar (no solo reusó el resultado de ApplyAsync):
+        // dos montajes de solo lectura adicionales, uno por índice.
+        Assert.Contains(_dism.Calls, c => c.StartsWith("mount:") && c.Contains(":1:") && c.EndsWith("ro=True"));
+        Assert.Contains(_dism.Calls, c => c.StartsWith("mount:") && c.Contains(":2:") && c.EndsWith("ro=True"));
+    }
+
+    [Fact]
+    public async Task ValidateFinalAsync_fails_if_a_disabled_bypass_key_is_still_present_on_re_read()
+    {
+        // Simula una discrepancia entre lo aplicado y lo que de verdad quedó en
+        // boot.wim: ValidateFinalAsync debe detectarla releyendo, no confiando
+        // en el resultado ya reportado por ApplyAsync.
+        var service = NewService();
+        var applyOptions = SafeOptions() with { BypassCpu = true };
+        await service.ApplyAsync("fake-source.iso", _workspace, applyOptions, Account());
+
+        var differentOptions = applyOptions with { BypassCpu = false };
+        var validation = await service.ValidateFinalAsync(_workspace, differentOptions);
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, e => e.Contains("BypassCPUCheck"));
+    }
+
+    [Fact]
+    public async Task ValidateFinalAsync_without_a_wired_IDismRunner_returns_valid_without_checking_anything()
+    {
+        // Documentado explícitamente: sin IDismRunner/IOfflineRegistryEditor
+        // (constructor de 3 argumentos, compatibilidad con P16-P24), la
+        // validación final se omite en vez de lanzar.
+        var legacyService = new InstallationImageService(
+            new BootWimProvisioner(new FakeIsoMounter(_mountedIsoRoot)), new BootWimModifier(_dism, _registry));
+
+        var validation = await legacyService.ValidateFinalAsync(_workspace, SafeOptions());
+
+        Assert.True(validation.IsValid);
     }
 
     [Fact]

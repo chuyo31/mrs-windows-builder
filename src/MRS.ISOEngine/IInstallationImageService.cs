@@ -21,4 +21,16 @@ public interface IInstallationImageService
         string sourceIsoPath, GenerationWorkspace workspace, InstallationOptionsModel options,
         AutounattendConfiguration accountConfig, CancellationToken cancellationToken = default,
         IProgress<InstallationProgressInfo>? progress = null);
+
+    /// <summary>
+    /// P28: re-verifica, de forma independiente y DESPUÉS del commit de
+    /// <see cref="ApplyAsync"/>, que boot.wim (índices 1 y 2) y autounattend.xml
+    /// quedaron realmente como se pidió — vuelve a montar de solo lectura y a
+    /// leer el registro/XML, en vez de confiar en el resultado ya reportado por
+    /// <see cref="ApplyAsync"/>. Pensada para la fase "Validación final" del
+    /// pipeline (P19), nunca se llama antes de que <see cref="ApplyAsync"/> haya
+    /// terminado con éxito.
+    /// </summary>
+    Task<WorkspaceValidationResult> ValidateFinalAsync(
+        GenerationWorkspace workspace, InstallationOptionsModel options, CancellationToken cancellationToken = default);
 }

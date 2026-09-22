@@ -1,9 +1,12 @@
+using System.Xml.Linq;
+using MRS.DismEngine.Dism;
 using MRS.DismEngine.Logging;
 using MRS.ISOEngine.Autounattend;
 using MRS.ISOEngine.BootWim;
 using MRS.ISOEngine.Configuration;
 using MRS.ISOEngine.Exceptions;
 using MRS.ISOEngine.Models;
+using MRS.ISOEngine.Registry;
 using InstallationOptionsModel = MRS.InstallationOptions.Models.InstallationOptions;
 
 namespace MRS.ISOEngine;
@@ -11,16 +14,52 @@ namespace MRS.ISOEngine;
 /// <summary>Implementación de <see cref="IInstallationImageService"/>. Ver la interfaz para el diagrama de responsabilidad.</summary>
 public sealed class InstallationImageService : IInstallationImageService
 {
+    // P28: auditoría real sobre una ISO generada por MRS confirmó que boot.wim
+    // tiene índice 1 = Microsoft Windows PE (x64) e índice 2 = Microsoft Windows
+    // Setup (x64) -- no "índice 2 = Recuperación" como asumía P16. LabConfig
+    // debe quedar aplicado en AMBOS: índice 2 es el entorno donde Windows Setup
+    // ejecuta de verdad la comprobación de hardware (TPM/Secure Boot/CPU/RAM),
+    // así que aplicarlo solo al índice 1 (WinPE) lo dejaba sin efecto real.
+    private static readonly int[] BootWimIndicesRequiringLabConfig = { 1, 2 };
+
+    // El bypass de red offline (BypassNRO) solo tiene sentido en el índice de
+    // Windows Setup: es el entorno que arranca antes de que empiece OOBE.
+    private const int WindowsSetupBootWimIndex = 2;
+
     private readonly IBootWimProvisioner _bootWimProvisioner;
     private readonly IBootWimModifier _bootWimModifier;
+    // P28: solo para ValidateFinalAsync (re-montar de solo lectura tras el
+    // commit). ApplyAsync sigue delegando todo el ciclo Mount(RW)/hive/Commit en
+    // _bootWimModifier, sin usar estos dos directamente.
+    private readonly IDismRunner? _dism;
+    private readonly IOfflineRegistryEditor? _registry;
+    private readonly LabConfigApplier? _labConfigApplier;
     private readonly IAppLogger _logger;
 
     public InstallationImageService(
         IBootWimProvisioner bootWimProvisioner, IBootWimModifier bootWimModifier, IAppLogger? logger = null)
+        : this(bootWimProvisioner, bootWimModifier, dismRunner: null, registry: null, logger)
+    {
+    }
+
+    /// <summary>
+    /// P28: sobrecarga que además permite <see cref="ValidateFinalAsync"/>. Los
+    /// dos parámetros nuevos son opcionales para no romper el constructor ya
+    /// usado por P16-P24 (tests y wiring existentes); si se omiten,
+    /// <see cref="ValidateFinalAsync"/> devuelve un resultado válido sin
+    /// comprobar nada, en vez de lanzar -- documentado explícitamente en el
+    /// propio método, nunca silencioso.
+    /// </summary>
+    public InstallationImageService(
+        IBootWimProvisioner bootWimProvisioner, IBootWimModifier bootWimModifier,
+        IDismRunner? dismRunner, IOfflineRegistryEditor? registry, IAppLogger? logger = null)
     {
         _bootWimProvisioner = bootWimProvisioner ?? throw new ArgumentNullException(nameof(bootWimProvisioner));
         _bootWimModifier = bootWimModifier ?? throw new ArgumentNullException(nameof(bootWimModifier));
+        _dism = dismRunner;
+        _registry = registry;
         _logger = logger ?? NullAppLogger.Instance;
+        _labConfigApplier = registry is not null ? new LabConfigApplier(registry, _logger) : null;
     }
 
     public async Task<InstallationImageResult> ApplyAsync(
@@ -61,13 +100,35 @@ public sealed class InstallationImageService : IInstallationImageService
             .ConfigureAwait(false);
         progress?.Report(InstallationProgressInfo.Create(bootWimPrepStage, 20, "boot.wim listo en el workspace", InstallationProgressLevel.Success));
 
-        // boot.wim índice 1 = Windows Setup / WinPE (índice 2 es Recuperación; no se toca).
-        var modification = await _bootWimModifier
-            .ApplyLabConfigAsync(workspace.BootWimPath, index: 1, options, workspace.MountPath, cancellationToken, progress)
-            .ConfigureAwait(false);
+        // P28: LabConfig se aplica y se verifica en AMBOS índices (1 = WinPE,
+        // 2 = Windows Setup); el primer índice que falle aborta sin tocar el
+        // siguiente, para no dejar boot.wim modificado a medias entre índices.
+        var errors = new List<string>();
+        var applied = new List<string>();
+        var allIndicesSucceeded = true;
 
-        var errors = new List<string>(modification.Errors);
-        var applied = new List<string>(modification.AppliedLogLines);
+        foreach (var index in BootWimIndicesRequiringLabConfig)
+        {
+            var applyOfflineOobeBypass = index == WindowsSetupBootWimIndex && options.AllowOfflineOobe;
+
+            var indexModification = await _bootWimModifier
+                .ApplyLabConfigAsync(workspace.BootWimPath, index, options, workspace.MountPath, cancellationToken, progress, applyOfflineOobeBypass)
+                .ConfigureAwait(false);
+
+            applied.AddRange(indexModification.AppliedLogLines);
+            errors.AddRange(indexModification.Errors);
+
+            if (!indexModification.Success)
+            {
+                allIndicesSucceeded = false;
+                _logger.Error($"[COMPAT] boot.wim index {index}: LabConfig modification failed.");
+                break;
+            }
+
+            _logger.Info($"[COMPAT] boot.wim index {index}: LabConfig applied and verified.");
+        }
+
+        var modification = new BootWimModificationResult(allIndicesSucceeded, applied, errors);
         string? autounattendPath = null;
 
         if (modification.Success)
@@ -112,5 +173,160 @@ public sealed class InstallationImageService : IInstallationImageService
         _logger.Info($"[WORKSPACE] Phase=install-options-fin WorkspaceId={workspace.WorkspaceId} Success={success}");
 
         return new InstallationImageResult(success, applied, errors, autounattendPath);
+    }
+
+    public async Task<WorkspaceValidationResult> ValidateFinalAsync(
+        GenerationWorkspace workspace, InstallationOptionsModel options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (_dism is null || _registry is null || _labConfigApplier is null)
+        {
+            _logger.Warn("[VALIDATE] InstallationImageService se construyó sin IDismRunner/IOfflineRegistryEditor; se omite la validación final de boot.wim/autounattend (P28).");
+            return WorkspaceValidationResult.Valid;
+        }
+
+        var errors = new List<string>();
+
+        foreach (var index in BootWimIndicesRequiringLabConfig)
+        {
+            var indexErrors = await ValidateBootWimIndexAsync(workspace.BootWimPath, index, options, workspace.MountPath, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (indexErrors.Count == 0)
+                _logger.Info($"[OK] boot.wim Index {index} LabConfig");
+            else
+                errors.AddRange(indexErrors);
+        }
+
+        if (options.AllowLocalAccount)
+            errors.AddRange(ValidateAutounattend(workspace, options));
+
+        return errors.Count == 0 ? WorkspaceValidationResult.Valid : new WorkspaceValidationResult(false, errors);
+    }
+
+    /// <summary>
+    /// Vuelve a montar boot.wim de SOLO LECTURA (independiente del mount RW ya
+    /// comprometido y desmontado por <see cref="ApplyAsync"/>) y a leer el hive
+    /// SYSTEM para confirmar los valores realmente presentes -- nunca se acepta
+    /// que DISM/reg.exe terminaran sin error como prueba suficiente.
+    /// </summary>
+    private async Task<List<string>> ValidateBootWimIndexAsync(
+        string bootWimPath, int index, InstallationOptionsModel options, string mountDir, CancellationToken cancellationToken)
+    {
+        var errors = new List<string>();
+
+        var mount = await _dism!.MountWimAsync(bootWimPath, index, mountDir, readOnly: true, cancellationToken).ConfigureAwait(false);
+        if (!mount.Succeeded)
+        {
+            errors.Add($"No se pudo montar boot.wim índice {index} para la validación final (ExitCode {mount.ExitCode}).");
+            return errors;
+        }
+
+        var hiveKeyName = "MRS_ISOENGINE_FINALVALIDATE_" + Guid.NewGuid().ToString("N")[..8];
+        var hiveFilePath = Path.Combine(mountDir, "Windows", "System32", "config", "SYSTEM");
+        var hiveLoaded = false;
+
+        try
+        {
+            var load = await _registry!.LoadHiveAsync(hiveKeyName, hiveFilePath, cancellationToken).ConfigureAwait(false);
+            if (!load.Succeeded)
+            {
+                errors.Add($"No se pudo cargar el hive SYSTEM offline del índice {index} para la validación final (ExitCode {load.ExitCode}).");
+                return errors;
+            }
+
+            hiveLoaded = true;
+
+            var verification = await _labConfigApplier!.VerifyAsync(hiveKeyName, options, cancellationToken).ConfigureAwait(false);
+            if (!verification.IsValid)
+                errors.AddRange(verification.Errors.Select(e => $"[boot.wim índice {index}] {e}"));
+
+            if (index == WindowsSetupBootWimIndex && options.AllowOfflineOobe)
+            {
+                var oobeVerification = await _labConfigApplier.VerifyOfflineOobeBypassAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+                if (!oobeVerification.IsValid)
+                    errors.AddRange(oobeVerification.Errors.Select(e => $"[boot.wim índice {index}] {e}"));
+            }
+        }
+        finally
+        {
+            if (hiveLoaded)
+                await _registry!.UnloadHiveAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+
+            // Solo lectura: nunca se confirma nada aquí, siempre se descarta
+            // (no hay ningún cambio que hacer persistente en una re-validación).
+            await _dism.UnmountWimDiscardAsync(mountDir, cancellationToken).ConfigureAwait(false);
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Confirma, leyendo el XML ya escrito por <see cref="ApplyAsync"/>, que
+    /// contiene una cuenta local y (si aplica) el comando de BypassNRO en
+    /// specialize -- nunca se acepta que <c>File.Exists</c> por sí solo sea
+    /// prueba de que el contenido es correcto.
+    /// </summary>
+    private List<string> ValidateAutounattend(GenerationWorkspace workspace, InstallationOptionsModel options)
+    {
+        var errors = new List<string>();
+        var path = Path.Combine(workspace.WorkspacePath, "autounattend.xml");
+
+        if (!File.Exists(path))
+        {
+            errors.Add("No se encuentra autounattend.xml en el workspace.");
+            return errors;
+        }
+
+        _logger.Info("[OK] autounattend.xml found");
+
+        XDocument document;
+        try
+        {
+            document = XDocument.Load(path);
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"autounattend.xml no es un XML válido: {ex.Message}");
+            return errors;
+        }
+
+        _logger.Info("[OK] autounattend.xml valid");
+
+        XNamespace ns = "urn:schemas-microsoft-com:unattend";
+
+        if (document.Descendants(ns + "LocalAccount").FirstOrDefault() is null)
+        {
+            errors.Add("autounattend.xml no contiene una cuenta local configurada.");
+        }
+        else
+        {
+            _logger.Info("[OK] local account configured");
+        }
+
+        // "Cuenta Microsoft no requerida": HideOnlineAccountScreens evita que
+        // Setup ofrezca el flujo de cuenta Microsoft durante oobeSystem.
+        var hideOnlineAccounts = document.Descendants(ns + "HideOnlineAccountScreens").FirstOrDefault()?.Value;
+        if (!string.Equals(hideOnlineAccounts, "true", StringComparison.OrdinalIgnoreCase))
+            errors.Add("autounattend.xml no oculta las pantallas de cuenta en línea (HideOnlineAccountScreens).");
+
+        if (options.AllowOfflineOobe)
+        {
+            var hasBypassNroCommand = document.Descendants(ns + "Path")
+                .Any(e => e.Value.Contains("BypassNRO", StringComparison.OrdinalIgnoreCase));
+
+            if (!hasBypassNroCommand)
+            {
+                errors.Add("autounattend.xml no contiene el comando de bypass de red offline (BypassNRO) esperado en specialize.");
+            }
+            else
+            {
+                _logger.Info("[OK] offline OOBE configured");
+            }
+        }
+
+        return errors;
     }
 }

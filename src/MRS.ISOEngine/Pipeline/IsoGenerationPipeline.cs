@@ -241,6 +241,22 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
                 progress?.Report(InstallationProgressInfo.Create(finalValidationStage, 90, "Validación final fallida", InstallationProgressLevel.Error));
                 return new IsoGenerationResult(false, null, workspace, appliedLines, errors);
             }
+
+            // P28: re-verifica, de forma independiente y tras el commit, boot.wim
+            // (índices 1 y 2) y autounattend.xml -- nunca se acepta el resultado ya
+            // reportado por PrepareBootWim como prueba suficiente.
+            progress?.Report(InstallationProgressInfo.Create(finalValidationStage, 91, "Verificando boot.wim y autounattend.xml..."));
+            var finalCompatValidation = await _installationImageService
+                .ValidateFinalAsync(workspace, request.InstallationOptions, cancellationToken)
+                .ConfigureAwait(false);
+            if (!finalCompatValidation.IsValid)
+            {
+                errors.AddRange(finalCompatValidation.Errors);
+                _logger.Error("[PIPELINE] Final compatibility validation failed: " + string.Join(" ", finalCompatValidation.Errors));
+                progress?.Report(InstallationProgressInfo.Create(finalValidationStage, 91, "Validación final de compatibilidad fallida", InstallationProgressLevel.Error));
+                return new IsoGenerationResult(false, null, workspace, appliedLines, errors);
+            }
+
             progress?.Report(InstallationProgressInfo.Create(finalValidationStage, 92, "Workspace válido", InstallationProgressLevel.Success));
 
             // ---- OSCDIMG ----------------------------------------------------------

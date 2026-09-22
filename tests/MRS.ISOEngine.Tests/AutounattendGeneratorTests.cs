@@ -96,6 +96,71 @@ public sealed class AutounattendGeneratorTests
     }
 
     [Fact]
+    public void AllowOfflineOobe_true_adds_a_specialize_pass_with_the_BypassNRO_command()
+    {
+        // P28: HideOnlineAccountScreens/HideWirelessSetupInOOBE (oobeSystem) no
+        // evitan la pantalla "Vamos a conectarte a una red" -- esa depende de
+        // HKLM\SYSTEM\Setup\OOBE\BypassNRO en el sistema YA INSTALADO, que solo
+        // existe a partir del paso specialize (después de aplicar install.wim).
+        var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
+        var document = XDocument.Parse(xml);
+        XNamespace ns = "urn:schemas-microsoft-com:unattend";
+
+        var specializeSettings = document.Root!.Elements(ns + "settings")
+            .SingleOrDefault(e => (string?)e.Attribute("pass") == "specialize");
+
+        Assert.NotNull(specializeSettings);
+        var path = specializeSettings!.Descendants(ns + "Path").Select(e => e.Value).SingleOrDefault();
+        Assert.NotNull(path);
+        Assert.Contains("BypassNRO", path);
+        Assert.Contains(@"HKLM\SYSTEM\Setup\OOBE", path);
+        Assert.Contains("Microsoft-Windows-Deployment", xml);
+    }
+
+    [Fact]
+    public void AllowOfflineOobe_false_never_adds_a_specialize_pass()
+    {
+        var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: false);
+        var document = XDocument.Parse(xml);
+        XNamespace ns = "urn:schemas-microsoft-com:unattend";
+
+        var specializeSettings = document.Root!.Elements(ns + "settings")
+            .Any(e => (string?)e.Attribute("pass") == "specialize");
+
+        Assert.False(specializeSettings);
+        Assert.DoesNotContain("BypassNRO", xml);
+    }
+
+    [Fact]
+    public void Generate_never_adds_a_windowsPE_pass()
+    {
+        // P28: se determinó que windowsPE no necesita ninguna configuración
+        // adicional para cuenta local/OOBE offline -- se confirma explícitamente
+        // (en vez de dejarlo implícito) para que un cambio futuro que lo añada
+        // por error se note en este test.
+        var xmlWithOffline = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
+        var xmlWithoutOffline = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: false);
+
+        Assert.DoesNotContain("windowsPE", xmlWithOffline);
+        Assert.DoesNotContain("windowsPE", xmlWithoutOffline);
+    }
+
+    [Fact]
+    public void The_specialize_pass_appears_before_the_oobeSystem_pass()
+    {
+        // Orden documentado del propio esquema de unattend: specialize se
+        // ejecuta antes que oobeSystem: si el XML se generara en otro orden,
+        // seguiría siendo válido para Setup (que no depende del orden de
+        // <settings>), pero mantenerlo en orden lógico facilita auditarlo.
+        var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
+
+        var specializeIndex = xml.IndexOf("pass=\"specialize\"", StringComparison.Ordinal);
+        var oobeSystemIndex = xml.IndexOf("pass=\"oobeSystem\"", StringComparison.Ordinal);
+
+        Assert.True(specializeIndex >= 0 && oobeSystemIndex >= 0 && specializeIndex < oobeSystemIndex);
+    }
+
+    [Fact]
     public void Validate_rejects_an_empty_account_name()
     {
         var result = AutounattendGenerator.Validate(DefaultConfig() with { AccountName = "" });
