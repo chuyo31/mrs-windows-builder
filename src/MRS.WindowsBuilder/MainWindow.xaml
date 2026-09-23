@@ -1041,6 +1041,33 @@
                                           Foreground="{StaticResource TextPrimary}" FontSize="12"
                                           IsChecked="True" Margin="0,0,0,6"
                                           Checked="InstallationOption_Changed" Unchecked="InstallationOption_Changed"/>
+
+                                <!-- P30: nombre/contraseña de la cuenta local, elegidos por quien usa
+                                     la aplicación (nunca un nombre ni una contraseña fijos). La
+                                     contraseña usa PasswordBox (nunca en texto plano en pantalla, nunca
+                                     en logs/terminal/mensajes). -->
+                                <StackPanel x:Name="LocalAccountFieldsPanel" Margin="20,0,0,10">
+                                    <TextBlock Text="Nombre de usuario" Style="{StaticResource FieldLabel}" Margin="0,4,0,4"/>
+                                    <TextBox x:Name="LocalAccountNameBox"
+                                             Background="{StaticResource FieldBackground}" Foreground="{StaticResource TextPrimary}"
+                                             BorderBrush="{StaticResource CardBorder}" BorderThickness="1" FontSize="12"
+                                             Padding="8,6" TextChanged="LocalAccountField_Changed"/>
+
+                                    <TextBlock Text="Contraseña (opcional)" Style="{StaticResource FieldLabel}" Margin="0,8,0,4"/>
+                                    <PasswordBox x:Name="LocalAccountPasswordBox"
+                                                 Background="{StaticResource FieldBackground}" Foreground="{StaticResource TextPrimary}"
+                                                 BorderBrush="{StaticResource CardBorder}" BorderThickness="1" FontSize="12"
+                                                 Padding="8,6" PasswordChanged="LocalAccountField_Changed"/>
+
+                                    <TextBlock Text="Confirmar contraseña" Style="{StaticResource FieldLabel}" Margin="0,8,0,4"/>
+                                    <PasswordBox x:Name="LocalAccountConfirmPasswordBox"
+                                                 Background="{StaticResource FieldBackground}" Foreground="{StaticResource TextPrimary}"
+                                                 BorderBrush="{StaticResource CardBorder}" BorderThickness="1" FontSize="12"
+                                                 Padding="8,6" PasswordChanged="LocalAccountField_Changed"/>
+
+                                    <TextBlock x:Name="LocalAccountValidationText" Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap"/>
+                                </StackPanel>
+
                                 <CheckBox x:Name="AllowOfflineOobeCheckBox" Content="Permitir instalación sin conexión"
                                           Foreground="{StaticResource TextPrimary}" FontSize="12"
                                           IsChecked="True" Margin="0,0,0,6"

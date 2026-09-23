@@ -1,3 +1,4 @@
+using MRS.ISOEngine.Autounattend;
 using MRS.ISOEngine.Configuration;
 using MRS.ISOEngine.Models;
 using MRS.PostInstall.Packaging;
@@ -37,6 +38,16 @@ public static class IsoGenerationRequestValidator
         // almacenamiento sin mecanismo implementado): no se duplica la lógica.
         var installationOptionsResult = InstallationExecutionValidator.Validate(request.InstallationOptions);
         errors.AddRange(installationOptionsResult.Errors);
+
+        // P30: la cuenta local (nombre/contraseña/confirmación) se valida aquí,
+        // ANTES de que el pipeline toque cualquier archivo -- "nunca comenzar una
+        // generación larga para descubrir al final que las contraseñas no
+        // coinciden". Solo se exige si se va a crear una cuenta local.
+        if (request.InstallationOptions.AllowLocalAccount)
+        {
+            var accountResult = AutounattendGenerator.Validate(request.AccountConfiguration);
+            errors.AddRange(accountResult.Errors);
+        }
 
         // Reutiliza la validación de P18: coherencia + existencia real de .NET/PCPI.
         var postInstallResult = PostInstallPackageValidator.Validate(request.PostInstallConfiguration, request.PostInstallSourceFiles);

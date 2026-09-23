@@ -31,12 +31,18 @@ public sealed class AutounattendGeneratorTests
     }
 
     [Fact]
-    public void Generate_never_contains_a_hardcoded_password_when_none_is_provided()
+    public void Generate_writes_an_empty_Password_Value_when_none_is_provided()
     {
-        var xml = AutounattendGenerator.Generate(DefaultConfig() with { Password = null }, allowOfflineOobe: true);
+        // P30: se descubrió (prueba real de P29) que OMITIR <Password> por
+        // completo hace que Windows exija cambiar la contraseña en el primer
+        // inicio de sesión pese a haberse pedido una cuenta sin contraseña.
+        // El elemento debe estar SIEMPRE presente, con <Value></Value> vacío
+        // cuando no se proporcionó ninguna -- nunca un valor por defecto no vacío.
+        var xml = AutounattendGenerator.Generate(DefaultConfig() with { Password = null, ConfirmPassword = null }, allowOfflineOobe: true);
 
-        Assert.DoesNotContain("<Password>", xml);
-        Assert.DoesNotContain("PlainText", xml);
+        Assert.Contains("<Password>", xml);
+        Assert.Contains("<Value></Value>", xml);
+        Assert.Contains("<PlainText>true</PlainText>", xml);
     }
 
     [Fact]
@@ -45,7 +51,7 @@ public sealed class AutounattendGeneratorTests
         // El valor viene del llamador en tiempo de ejecución, nunca de una constante del código.
         var runtimePassword = "P@ss-" + Guid.NewGuid().ToString("N")[..8];
 
-        var xml = AutounattendGenerator.Generate(DefaultConfig() with { Password = runtimePassword }, allowOfflineOobe: true);
+        var xml = AutounattendGenerator.Generate(DefaultConfig() with { Password = runtimePassword, ConfirmPassword = runtimePassword }, allowOfflineOobe: true);
 
         Assert.Contains(runtimePassword, xml);
     }
@@ -210,6 +216,119 @@ public sealed class AutounattendGeneratorTests
     public void Generate_throws_a_controlled_exception_for_an_invalid_configuration()
     {
         Assert.Throws<IsoEngineException>(() => AutounattendGenerator.Generate(DefaultConfig() with { AccountName = "" }, allowOfflineOobe: true));
+    }
+
+    // ----- P30: cuenta local configurable + contraseña opcional -----
+
+    [Fact]
+    public void AccountName_has_no_default_value()
+    {
+        // El propio modelo (no este generador) es responsable de no tener un
+        // valor por defecto: aquí se comprueba que un record recién creado sin
+        // inicializar AccountName queda vacío, nunca "Usuario" ni ningún otro nombre fijo.
+        var config = new AutounattendConfiguration();
+
+        Assert.Equal(string.Empty, config.AccountName);
+    }
+
+    [Fact]
+    public void Validate_accepts_an_empty_password_with_an_empty_confirmation()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { Password = null, ConfirmPassword = null });
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_accepts_a_password_that_matches_its_confirmation()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { Password = "abc123", ConfirmPassword = "abc123" });
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_rejects_a_password_that_does_not_match_its_confirmation()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { Password = "abc123", ConfirmPassword = "xyz789" });
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("no coinciden"));
+    }
+
+    [Fact]
+    public void Validate_rejects_a_password_without_its_confirmation()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { Password = "abc123", ConfirmPassword = null });
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_rejects_a_confirmation_when_no_password_was_provided()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { Password = null, ConfirmPassword = "abc123" });
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_rejects_an_account_name_with_leading_or_trailing_whitespace()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { AccountName = " Carlos" });
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_rejects_an_account_name_that_is_only_whitespace()
+    {
+        var result = AutounattendGenerator.Validate(DefaultConfig() with { AccountName = "   " });
+
+        Assert.False(result.IsValid);
+    }
+
+    [Theory]
+    [InlineData("Carlos")]
+    [InlineData("Tecnico")]
+    [InlineData("Juan")]
+    public void Generate_uses_whatever_custom_name_the_caller_provides_never_a_fixed_default(string customName)
+    {
+        var xml = AutounattendGenerator.Generate(DefaultConfig() with { AccountName = customName }, allowOfflineOobe: true);
+
+        Assert.Contains($"<Name>{customName}</Name>", xml);
+    }
+
+    [Fact]
+    public void No_source_file_in_this_project_hardcodes_the_username_Usuario_as_a_default()
+    {
+        // P30: el modelo ya no debe tener "Usuario" como valor por defecto en
+        // ningún sitio del código fuente (solo en tests, donde es un valor de
+        // prueba explícito, no un default silencioso).
+        var repoRoot = FindRepoRoot();
+        var modelFile = Path.Combine(repoRoot, "src", "MRS.ISOEngine", "Models", "AutounattendConfiguration.cs");
+
+        // Se busca la asignación real (fuera de comentarios doc, donde "Usuario"
+        // aparece deliberadamente para EXPLICAR que ya no es el valor por defecto).
+        var codeLines = File.ReadAllLines(modelFile).Where(l => !l.TrimStart().StartsWith("///"));
+        Assert.DoesNotContain(codeLines, l => l.Contains("= \"Usuario\""));
+    }
+
+    [Fact]
+    public void P29_hardware_bypass_and_OOBE_mechanisms_remain_intact()
+    {
+        // Regresión P30: la cuenta local configurable no debe tocar nada de lo
+        // que P28/P29 ya dejó funcionando de verdad en la prueba real.
+        var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
+        var document = XDocument.Parse(xml);
+        XNamespace ns = "urn:schemas-microsoft-com:unattend";
+
+        var passes = document.Root!.Elements(ns + "settings").Select(e => (string?)e.Attribute("pass")).ToList();
+        Assert.Contains("windowsPE", passes);
+        Assert.Contains("specialize", passes);
+        Assert.Contains("oobeSystem", passes);
+        Assert.Contains("BypassNRO", xml);
+        Assert.Contains(@"HKLM\SYSTEM\Setup\OOBE", xml);
     }
 
     private static string FindRepoRoot()

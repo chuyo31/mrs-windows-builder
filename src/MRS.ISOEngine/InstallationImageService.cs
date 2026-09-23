@@ -379,6 +379,7 @@ public sealed class InstallationImageService : IInstallationImageService
         var passes = document.Root?.Elements(ns + "settings")
             .Select(e => (string?)e.Attribute("pass"))
             .Where(p => p is not null)
+            .Select(p => p!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>();
 
         if (!passes.Contains("windowsPE"))
@@ -408,20 +409,41 @@ public sealed class InstallationImageService : IInstallationImageService
         if (unknownComponents.Count > 0)
             errors.Add($"autounattend.xml contiene componentes no reconocidos: {string.Join(", ", unknownComponents)}.");
 
-        if (document.Descendants(ns + "LocalAccount").FirstOrDefault() is null)
+        // P30: comprueba que el LocalAccount existe Y que su nombre coincide con
+        // el realmente configurado -- nunca basta con "existe alguna cuenta".
+        var localAccount = document.Descendants(ns + "LocalAccount").FirstOrDefault();
+        if (localAccount is null)
         {
             errors.Add("autounattend.xml no contiene una cuenta local configurada.");
         }
         else
         {
-            _logger.Info("[OK] local account configured");
+            var configuredName = localAccount.Element(ns + "Name")?.Value;
+            if (!string.Equals(configuredName, accountConfig.AccountName, StringComparison.Ordinal))
+                errors.Add($"autounattend.xml define la cuenta local '{configuredName}', pero se configuró '{accountConfig.AccountName}'.");
+            else
+                _logger.Info($"[OK] LocalAccount: {accountConfig.AccountName}");
         }
 
-        // Nunca hay contraseña en el XML si no se pidió ninguna -- comprobado
-        // contra la configuración real, no solo "si existe la etiqueta".
-        var hasPasswordElement = document.Descendants(ns + "Password").Any();
-        if (string.IsNullOrEmpty(accountConfig.Password) && hasPasswordElement)
+        // P30: Generate() ahora SIEMPRE escribe <Password> (con Value vacío si no
+        // se pidió contraseña -- ver AutounattendGenerator, evita que Windows
+        // fuerce un cambio de contraseña en el primer inicio de sesión), así que
+        // ya no basta con comprobar si el elemento existe: hay que comparar el
+        // contenido (vacío/no vacío) con lo realmente configurado. El valor en sí
+        // NUNCA se registra en el log, solo si está "configured" o "empty".
+        var expectedHasPassword = !string.IsNullOrEmpty(accountConfig.Password);
+        var passwordElement = localAccount?.Element(ns + "Password");
+        var actualPasswordValue = passwordElement?.Element(ns + "Value")?.Value;
+        var actualHasPassword = !string.IsNullOrEmpty(actualPasswordValue);
+
+        if (passwordElement is null)
+            errors.Add("autounattend.xml no contiene el elemento Password para la cuenta local.");
+        else if (expectedHasPassword && !actualHasPassword)
+            errors.Add("autounattend.xml no contiene la contraseña configurada.");
+        else if (!expectedHasPassword && actualHasPassword)
             errors.Add("autounattend.xml contiene una contraseña pese a que no se proporcionó ninguna.");
+        else
+            _logger.Info(expectedHasPassword ? "[OK] LocalAccount password: configured" : "[OK] LocalAccount password: empty");
 
         // "Cuenta Microsoft no requerida": HideOnlineAccountScreens evita que
         // Setup ofrezca el flujo de cuenta Microsoft durante oobeSystem.

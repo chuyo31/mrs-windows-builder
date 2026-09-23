@@ -27,6 +27,10 @@ public sealed class IsoGenerationRequestValidatorTests : IDisposable
         InstallationOptions = InstallationOptionsModel.Default with { BypassStorage = false },
         PostInstallConfiguration = new PostInstallConfiguration { Enabled = false },
         OutputIsoPath = Path.Combine(_dir, "output.iso"),
+        // P30: AccountConfiguration.AccountName ya no tiene ningún valor por
+        // defecto -- un llamador real siempre debe indicar un nombre explícito
+        // cuando AllowLocalAccount está activo (true por defecto en InstallationOptions).
+        AccountConfiguration = new AutounattendConfiguration { AccountName = "Carlos" },
     };
 
     [Fact]

@@ -282,6 +282,51 @@ public sealed class InstallationImageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ValidateFinalAsync_fails_if_the_configured_account_name_does_not_match_what_was_generated()
+    {
+        // P30: ValidateAutounattend ahora compara el <Name> real del XML con el
+        // nombre configurado, no solo comprueba que "existe alguna cuenta".
+        var service = NewService();
+        var applyResult = await service.ApplyAsync("fake-source.iso", _workspace, SafeOptions(), Account() with { AccountName = "Carlos" });
+        Assert.True(applyResult.Success);
+
+        var validation = await service.ValidateFinalAsync(_workspace, SafeOptions(), Account() with { AccountName = "OtroNombre" });
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, e => e.Contains("Carlos") || e.Contains("OtroNombre"));
+    }
+
+    [Fact]
+    public async Task ValidateFinalAsync_succeeds_and_logs_password_configured_when_a_password_was_set()
+    {
+        // P30: nunca se registra el valor real de la contraseña, solo si está
+        // "configured"/"empty". Se usa un valor de prueba explícito (nunca un
+        // valor por defecto de producto) solo para este test de laboratorio.
+        var service = NewService();
+        var account = Account() with { AccountName = "Carlos", Password = "1234", ConfirmPassword = "1234" };
+        var applyResult = await service.ApplyAsync("fake-source.iso", _workspace, SafeOptions(), account);
+        Assert.True(applyResult.Success);
+
+        var validation = await service.ValidateFinalAsync(_workspace, SafeOptions(), account);
+
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors));
+    }
+
+    [Fact]
+    public async Task ValidateFinalAsync_fails_if_expected_password_state_does_not_match_what_was_generated()
+    {
+        // El autounattend se generó SIN contraseña, pero se revalida esperando
+        // que SÍ hubiera una -- debe detectarse la discrepancia.
+        var service = NewService();
+        var applyResult = await service.ApplyAsync("fake-source.iso", _workspace, SafeOptions(), Account() with { AccountName = "Carlos", Password = null, ConfirmPassword = null });
+        Assert.True(applyResult.Success);
+
+        var validation = await service.ValidateFinalAsync(_workspace, SafeOptions(), Account() with { AccountName = "Carlos", Password = "1234", ConfirmPassword = "1234" });
+
+        Assert.False(validation.IsValid);
+    }
+
+    [Fact]
     public async Task A_failed_run_preserves_the_workspace_directory()
     {
         _registry.LoadExitCode = 1; // fuerza un fallo dentro de BootWimModifier

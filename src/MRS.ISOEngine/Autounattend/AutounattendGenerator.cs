@@ -66,8 +66,13 @@ public static class AutounattendGenerator
         ArgumentNullException.ThrowIfNull(config);
         var errors = new List<string>();
 
+        // P30: sin normalizar el nombre en silencio -- si el usuario escribió
+        // espacios accidentales al principio/final, se avisa en vez de recortarlo
+        // sin que se entere ("no cambiar silenciosamente el nombre introducido").
         if (string.IsNullOrWhiteSpace(config.AccountName))
             errors.Add("El nombre de cuenta local no puede estar vacío.");
+        else if (config.AccountName != config.AccountName.Trim())
+            errors.Add("El nombre de cuenta local no puede empezar ni terminar en espacios.");
         else if (config.AccountName.Length > 20)
             errors.Add("El nombre de cuenta local no puede superar 20 caracteres (límite de Windows Setup).");
         else if (config.AccountName.Any(c => InvalidAccountNameChars.Contains(c)))
@@ -77,6 +82,19 @@ public static class AutounattendGenerator
             errors.Add("El nombre de equipo no puede estar vacío.");
         else if (config.ComputerName.Length > 15)
             errors.Add("El nombre de equipo no puede superar 15 caracteres (límite NetBIOS).");
+
+        // P30: contraseña opcional, pero coherente -- nunca se acepta una
+        // confirmación que no coincide exactamente ni una confirmación "huérfana"
+        // (rellena cuando no hay contraseña, o vacía cuando sí la hay).
+        var hasPassword = !string.IsNullOrEmpty(config.Password);
+        var hasConfirmPassword = !string.IsNullOrEmpty(config.ConfirmPassword);
+
+        if (hasPassword && !hasConfirmPassword)
+            errors.Add("Debe confirmar la contraseña.");
+        else if (!hasPassword && hasConfirmPassword)
+            errors.Add("Si no se utiliza contraseña, el campo de confirmación también debe estar vacío.");
+        else if (hasPassword && !string.Equals(config.Password, config.ConfirmPassword, StringComparison.Ordinal))
+            errors.Add("Las contraseñas no coinciden.");
 
         return errors.Count == 0 ? AutounattendValidationResult.Valid : new AutounattendValidationResult(false, errors);
     }
@@ -98,14 +116,18 @@ public static class AutounattendGenerator
             new XElement(Ns + "Group", "Administrators"),
             new XElement(Ns + "DisplayName", config.AccountName));
 
-        // Contraseña opcional: si no se proporciona, la cuenta se crea sin contraseña
-        // (sección 5). Nunca hay un valor por defecto no vacío en el código.
-        if (!string.IsNullOrEmpty(config.Password))
-        {
-            localAccount.AddFirst(new XElement(Ns + "Password",
-                new XElement(Ns + "Value", config.Password),
-                new XElement(Ns + "PlainText", "true")));
-        }
+        // P30: SIEMPRE se escribe <Password>, incluso sin contraseña (Value
+        // vacío) -- omitir el elemento por completo deja que Windows Setup
+        // aplique su propio comportamiento por defecto para la cuenta, que en la
+        // práctica (confirmado en la prueba real de P29) hace que Windows exija
+        // establecer una contraseña en el primer inicio de sesión pese a haberse
+        // pedido explícitamente una cuenta sin contraseña. Un <Value></Value>
+        // vacío con PlainText=true es la forma documentada por el esquema de
+        // unattend de decir "contraseña vacía, a propósito" en vez de "sin
+        // especificar". Nunca hay un valor por defecto no vacío en el código.
+        localAccount.AddFirst(new XElement(Ns + "Password",
+            new XElement(Ns + "Value", config.Password ?? string.Empty),
+            new XElement(Ns + "PlainText", "true")));
 
         var oobe = new XElement(Ns + "OOBE",
             new XElement(Ns + "HideEULAPage", "true"),

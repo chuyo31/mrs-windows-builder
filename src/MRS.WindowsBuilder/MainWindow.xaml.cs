@@ -19,6 +19,7 @@ using MRS.ImageEngine.Iso;
 using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
 using MRS.ISOEngine;
+using MRS.ISOEngine.Autounattend;
 using MRS.ISOEngine.BootWim;
 using MRS.ISOEngine.InstallWim;
 using MRS.ISOEngine.Models;
@@ -110,6 +111,12 @@ public partial class MainWindow : Window
     // todavía; el checkbox correspondiente está deshabilitado en el XAML para que
     // nunca pueda marcarse desde la interfaz.
     private InstallationOptionsModel _installationOptions = InstallationOptionsModel.Default with { BypassStorage = false };
+
+    // P30: sin ningún nombre/contraseña por defecto -- AutounattendConfiguration.AccountName
+    // ya no tiene un valor implícito ("Usuario"); quien use la aplicación debe
+    // escribir el suyo, o la validación (antes de tocar cualquier archivo) lo
+    // bloqueará con un mensaje claro.
+    private AutounattendConfiguration _accountConfiguration = new();
 
     public MainWindow()
     {
@@ -1005,6 +1012,24 @@ public partial class MainWindow : Window
             checkBox.Checked += InstallationOption_Changed;
             checkBox.Unchecked += InstallationOption_Changed;
         }
+
+        // P30: refleja _accountConfiguration en los campos sin disparar
+        // LocalAccountField_Changed -- mismo motivo que las casillas de arriba
+        // (evitar una reconstrucción/validación redundante justo después).
+        LocalAccountNameBox.TextChanged -= LocalAccountField_Changed;
+        LocalAccountPasswordBox.PasswordChanged -= LocalAccountField_Changed;
+        LocalAccountConfirmPasswordBox.PasswordChanged -= LocalAccountField_Changed;
+
+        LocalAccountNameBox.Text = _accountConfiguration.AccountName;
+        LocalAccountPasswordBox.Password = _accountConfiguration.Password ?? string.Empty;
+        LocalAccountConfirmPasswordBox.Password = _accountConfiguration.ConfirmPassword ?? string.Empty;
+        LocalAccountFieldsPanel.IsEnabled = _installationOptions.AllowLocalAccount;
+
+        LocalAccountNameBox.TextChanged += LocalAccountField_Changed;
+        LocalAccountPasswordBox.PasswordChanged += LocalAccountField_Changed;
+        LocalAccountConfirmPasswordBox.PasswordChanged += LocalAccountField_Changed;
+
+        UpdateLocalAccountValidationDisplay();
     }
 
     /// <summary>
@@ -1034,6 +1059,65 @@ public partial class MainWindow : Window
             BypassRam = BypassRamCheckBox.IsChecked == true,
             BypassStorage = BypassStorageCheckBox.IsChecked == true,
         };
+
+        // P30: sin cuenta local no tiene sentido pedir nombre/contraseña.
+        LocalAccountFieldsPanel.IsEnabled = _installationOptions.AllowLocalAccount;
+        UpdateLocalAccountValidationDisplay();
+    }
+
+    /// <summary>
+    /// P30: única fuente de verdad de <see cref="_accountConfiguration"/> a
+    /// partir de los tres campos de la UI, y única fuente de verdad de la
+    /// retroalimentación visual (✓/✗) -- nunca decide nada sobre Windows ni
+    /// sobre el WIM, solo actualiza estado en memoria y texto en pantalla.
+    /// </summary>
+    private void LocalAccountField_Changed(object sender, TextChangedEventArgs e) => OnLocalAccountFieldChanged();
+
+    private void LocalAccountField_Changed(object sender, RoutedEventArgs e) => OnLocalAccountFieldChanged();
+
+    private void OnLocalAccountFieldChanged()
+    {
+        if (!IsInitialized)
+            return;
+
+        _accountConfiguration = _accountConfiguration with
+        {
+            AccountName = LocalAccountNameBox.Text,
+            // PasswordBox.Password nunca es null; se traduce "" -> null para que
+            // AutounattendConfiguration siga representando "sin contraseña" con
+            // null, como el resto del proyecto ya espera (P16).
+            Password = string.IsNullOrEmpty(LocalAccountPasswordBox.Password) ? null : LocalAccountPasswordBox.Password,
+            ConfirmPassword = string.IsNullOrEmpty(LocalAccountConfirmPasswordBox.Password) ? null : LocalAccountConfirmPasswordBox.Password,
+        };
+
+        UpdateLocalAccountValidationDisplay();
+    }
+
+    /// <summary>
+    /// Retroalimentación visual clara (P30, sección 7), nunca revela ninguna
+    /// contraseña: solo dice si la configuración actual es válida o no, y por
+    /// qué. No se evalúa si la cuenta local está desactivada.
+    /// </summary>
+    private void UpdateLocalAccountValidationDisplay()
+    {
+        if (!_installationOptions.AllowLocalAccount)
+        {
+            LocalAccountValidationText.Text = string.Empty;
+            return;
+        }
+
+        var validation = AutounattendGenerator.Validate(_accountConfiguration);
+        if (validation.IsValid)
+        {
+            var hasPassword = !string.IsNullOrEmpty(_accountConfiguration.Password);
+            LocalAccountValidationText.Text = hasPassword ? "✓ Usuario válido · con contraseña" : "✓ Usuario válido · cuenta sin contraseña";
+            LocalAccountValidationText.Foreground = Brushes.LightGreen;
+        }
+        else
+        {
+            LocalAccountValidationText.Text = "✗ " + string.Join(" ", validation.Errors);
+            LocalAccountValidationText.Foreground = Brushes.IndianRed;
+        }
     }
 
     private void PlanBackButton_Click(object sender, RoutedEventArgs e)
@@ -1083,6 +1167,23 @@ public partial class MainWindow : Window
                 "No se aplicará ningún cambio.",
                 "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
+        }
+
+        // P30: la cuenta local se valida aquí -- antes de la propia confirmación
+        // y de tocar nada -- para nunca dejar que el usuario espere una
+        // generación larga solo para descubrir al final que las contraseñas no
+        // coinciden. El pipeline (IsoGenerationRequestValidator) la vuelve a
+        // validar de forma independiente, así que esto es solo para dar el
+        // error lo antes posible, no la única comprobación.
+        if (_installationOptions.AllowLocalAccount)
+        {
+            var accountValidation = AutounattendGenerator.Validate(_accountConfiguration);
+            if (!accountValidation.IsValid)
+            {
+                MessageBox.Show(this, string.Join("\n", accountValidation.Errors),
+                    "MRS Windows Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
         }
 
         // Nunca se comienza sin confirmación explícita (Parte 25 del prompt).
@@ -1158,7 +1259,9 @@ public partial class MainWindow : Window
             // InstallationOptions se transmite tal cual: esta pantalla no decide
             // ni cambia ningún valor (cuenta local, OOBE offline, bypasses).
             InstallationOptions = _installationOptions,
-            AccountConfiguration = new AutounattendConfiguration(),
+            // P30: nombre/contraseña elegidos por quien usa la aplicación, ya
+            // validados en PlanConfirmButton_Click -- nunca un valor fijo aquí.
+            AccountConfiguration = _accountConfiguration,
             RemovalPlan = plan,
             PostInstallConfiguration = new PostInstallConfiguration { Enabled = postInstallEnabled },
             PostInstallSourceFiles = new PostInstallSourceFiles(),
