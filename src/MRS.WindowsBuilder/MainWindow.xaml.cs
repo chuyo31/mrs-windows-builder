@@ -20,6 +20,7 @@ using MRS.ImageEngine.Models;
 using MRS.ImageEngine.Parsing;
 using MRS.ISOEngine;
 using MRS.ISOEngine.BootWim;
+using MRS.ISOEngine.InstallWim;
 using MRS.ISOEngine.Models;
 using MRS.ISOEngine.Oscdimg;
 using MRS.ISOEngine.Pipeline;
@@ -133,11 +134,15 @@ public partial class MainWindow : Window
         var bootWimModifier = new BootWimModifier(dismRunner, registryEditor, _logger);
         var installationImageService = new InstallationImageService(bootWimProvisioner, bootWimModifier, dismRunner, registryEditor, _logger);
         var treeCopier = new IsoTreeCopier(_isoMounter, _logger);
+        // P29: el BypassNRO offline de boot.wim (P28) no basta -- se aplica
+        // también sobre la imagen de trabajo de install.wim, con el mismo
+        // OfflineRegistryEditor ya usado para boot.wim.
+        var installWimOobeConfigurator = new InstallWimOobeConfigurator(dismRunner, registryEditor, _logger);
         var postInstallPackageBuilder = new PostInstallPackageBuilder(_logger);
         var oscdimgRunner = new OscdimgRunner(processRunner);
         _isoGenerationPipeline = new IsoGenerationPipeline(
             treeCopier, _isoMounter, installationImageService, _workingImageFactory,
-            _removalEngine, postInstallPackageBuilder, oscdimgRunner, logger: _logger);
+            _removalEngine, installWimOobeConfigurator, postInstallPackageBuilder, oscdimgRunner, logger: _logger);
 
         LoadProfiles();
 

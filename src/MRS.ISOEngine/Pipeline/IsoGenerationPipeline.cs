@@ -1,6 +1,7 @@
 using MRS.DismEngine.Logging;
 using MRS.ImageEngine.Iso;
 using MRS.ISOEngine.Configuration;
+using MRS.ISOEngine.InstallWim;
 using MRS.ISOEngine.Models;
 using MRS.ISOEngine.Oscdimg;
 using MRS.ISOEngine.TreeCopy;
@@ -19,6 +20,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
     private readonly IInstallationImageService _installationImageService;
     private readonly IWorkingImageFactory _workingImageFactory;
     private readonly IRemovalEngine _removalEngine;
+    private readonly IInstallWimOobeConfigurator _installWimOobeConfigurator;
     private readonly IPostInstallPackageBuilder _postInstallPackageBuilder;
     private readonly IOscdimgRunner _oscdimgRunner;
     private readonly IElevationChecker _elevationChecker;
@@ -30,6 +32,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
         IInstallationImageService installationImageService,
         IWorkingImageFactory workingImageFactory,
         IRemovalEngine removalEngine,
+        IInstallWimOobeConfigurator installWimOobeConfigurator,
         IPostInstallPackageBuilder postInstallPackageBuilder,
         IOscdimgRunner oscdimgRunner,
         IElevationChecker? elevationChecker = null,
@@ -40,6 +43,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
         _installationImageService = installationImageService ?? throw new ArgumentNullException(nameof(installationImageService));
         _workingImageFactory = workingImageFactory ?? throw new ArgumentNullException(nameof(workingImageFactory));
         _removalEngine = removalEngine ?? throw new ArgumentNullException(nameof(removalEngine));
+        _installWimOobeConfigurator = installWimOobeConfigurator ?? throw new ArgumentNullException(nameof(installWimOobeConfigurator));
         _postInstallPackageBuilder = postInstallPackageBuilder ?? throw new ArgumentNullException(nameof(postInstallPackageBuilder));
         _oscdimgRunner = oscdimgRunner ?? throw new ArgumentNullException(nameof(oscdimgRunner));
         _elevationChecker = elevationChecker ?? new ElevationChecker();
@@ -170,6 +174,29 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
                 return new IsoGenerationResult(false, null, workspace, appliedLines, errors);
             }
 
+            // P29: el BypassNRO offline de boot.wim (P28) no basta -- la prueba
+            // real en VM siguió mostrando "Vamos a conectarte a una red". El
+            // estado necesario tiene que existir también en el SYSTEM hive del
+            // Windows YA INSTALADO antes de llegar a OOBE, así que se aplica aquí,
+            // sobre la MISMA imagen de trabajo que ya usa el pipeline (nunca sobre
+            // la ISO original ni sobre una copia distinta), justo después de que
+            // RemovalEngine terminó y antes de copiarla al workspace de generación.
+            if (request.InstallationOptions.AllowOfflineOobe)
+            {
+                var installWimOobeResult = await _installWimOobeConfigurator
+                    .ApplyOfflineOobeBypassAsync(workingImage.WorkingWimPath, workingImage.Index, workingImage.MountPath, cancellationToken, progress)
+                    .ConfigureAwait(false);
+
+                appliedLines.AddRange(installWimOobeResult.AppliedLogLines);
+                if (!installWimOobeResult.Success)
+                {
+                    errors.AddRange(installWimOobeResult.Errors);
+                    _logger.Error("[PIPELINE] install.wim OOBE configuration failed: " + string.Join(" ", installWimOobeResult.Errors));
+                    progress?.Report(InstallationProgressInfo.Create(installWimStage, 79, "Falló la configuración OOBE offline de install.wim", InstallationProgressLevel.Error));
+                    return new IsoGenerationResult(false, null, workspace, appliedLines, errors);
+                }
+            }
+
             // El install.wim modificado vive en el workspace propio de
             // WorkingImageFactory (P07); se copia al workspace de generación de
             // P19 para que quede junto a boot.wim/$OEM$/autounattend.xml.
@@ -247,7 +274,7 @@ public sealed class IsoGenerationPipeline : IIsoGenerationPipeline
             // reportado por PrepareBootWim como prueba suficiente.
             progress?.Report(InstallationProgressInfo.Create(finalValidationStage, 91, "Verificando boot.wim y autounattend.xml..."));
             var finalCompatValidation = await _installationImageService
-                .ValidateFinalAsync(workspace, request.InstallationOptions, cancellationToken)
+                .ValidateFinalAsync(workspace, request.InstallationOptions, request.AccountConfiguration, cancellationToken)
                 .ConfigureAwait(false);
             if (!finalCompatValidation.IsValid)
             {

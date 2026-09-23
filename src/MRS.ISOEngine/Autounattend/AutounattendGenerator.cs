@@ -36,7 +36,23 @@ namespace MRS.ISOEngine.Autounattend;
 /// correcto (y documentado por el propio esquema de unattend, componente
 /// <c>Microsoft-Windows-Deployment</c>/<c>RunSynchronous</c>) para dejarlo ya
 /// puesto de forma automática — sin ninguna intervención manual del usuario
-/// durante OOBE. No se toca la fase <c>windowsPE</c>.
+/// durante OOBE. La prueba real de P28/P29 demostró que ese
+/// <c>specialize</c> no basta por sí solo (la pantalla de red seguía
+/// apareciendo): el mecanismo realmente fiable es aplicar el mismo valor
+/// offline sobre el propio SYSTEM hive de <c>install.wim</c> (ver
+/// <c>MRS.ISOEngine.InstallWim.InstallWimOobeConfigurator</c>, P29) antes de
+/// que Setup lo copie a disco; <c>specialize</c> se conserva igualmente como
+/// capa adicional, nunca perjudica.
+///
+/// Siempre incluye también un paso <c>windowsPE</c> (P29, sección 2) con
+/// <c>Microsoft-Windows-Setup/UserData/AcceptEula</c>: es el paso que Setup
+/// procesa desde el principio de la instalación, y su presencia es lo que
+/// documenta el propio esquema de unattend para que Setup trate el resto del
+/// archivo (specialize/oobeSystem) como autoritativo desde el arranque. No se
+/// añade ningún componente de idioma/locale en <c>windowsPE</c>: no hay
+/// ninguna configuración de idioma en <see cref="AutounattendConfiguration"/>
+/// ni en <c>InstallationOptions</c>, y fijar uno a mano aquí sería un valor
+/// inventado que podría no coincidir con el idioma real de la ISO.
 /// </summary>
 public static class AutounattendGenerator
 {
@@ -118,6 +134,25 @@ public static class AutounattendGenerator
 
         var root = new XElement(Ns + "unattend",
             new XAttribute(XNamespace.Xmlns + "wcm", WcmNs));
+
+        // P29, sección 2: fase windowsPE válida, siempre presente (no depende de
+        // ninguna opción). AcceptEula es el único campo real y documentado que
+        // tiene sentido aquí sin inventar nada: no hay ProductKey que ofrecer, y
+        // ninguna configuración de idioma existe todavía en InstallationOptions.
+        var setupComponent = new XElement(Ns + "component",
+            new XAttribute("name", "Microsoft-Windows-Setup"),
+            new XAttribute("processorArchitecture", "amd64"),
+            new XAttribute("publicKeyToken", "31bf3856ad364e35"),
+            new XAttribute("language", "neutral"),
+            new XAttribute("versionScope", "nonSxS"),
+            new XElement(Ns + "UserData",
+                new XElement(Ns + "AcceptEula", "true")));
+
+        var settingsWindowsPe = new XElement(Ns + "settings",
+            new XAttribute("pass", "windowsPE"),
+            setupComponent);
+
+        root.Add(settingsWindowsPe);
 
         // P28: BypassNRO debe quedar puesto en el sistema instalado ANTES de que
         // arranque OOBE. specialize es el primer paso de Setup que se ejecuta ya

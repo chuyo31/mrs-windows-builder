@@ -23,14 +23,18 @@ public interface IInstallationImageService
         IProgress<InstallationProgressInfo>? progress = null);
 
     /// <summary>
-    /// P28: re-verifica, de forma independiente y DESPUÉS del commit de
-    /// <see cref="ApplyAsync"/>, que boot.wim (índices 1 y 2) y autounattend.xml
-    /// quedaron realmente como se pidió — vuelve a montar de solo lectura y a
-    /// leer el registro/XML, en vez de confiar en el resultado ya reportado por
-    /// <see cref="ApplyAsync"/>. Pensada para la fase "Validación final" del
-    /// pipeline (P19), nunca se llama antes de que <see cref="ApplyAsync"/> haya
-    /// terminado con éxito.
+    /// P28/P29: re-verifica, de forma independiente y DESPUÉS del commit de
+    /// <see cref="ApplyAsync"/> (boot.wim) y de
+    /// <c>InstallWimOobeConfigurator.ApplyOfflineOobeBypassAsync</c>
+    /// (install.wim), que boot.wim (índices 1 y 2), autounattend.xml e
+    /// install.wim quedaron realmente como se pidió — vuelve a montar de solo
+    /// lectura y a leer el registro/XML, en vez de confiar en ningún resultado
+    /// ya reportado. Pensada para la fase "Validación final" del pipeline (P19),
+    /// nunca se llama antes de que las fases anteriores hayan terminado con
+    /// éxito. <paramref name="accountConfig"/> se usa solo para confirmar que no
+    /// hay contraseña en el XML cuando no se pidió ninguna.
     /// </summary>
     Task<WorkspaceValidationResult> ValidateFinalAsync(
-        GenerationWorkspace workspace, InstallationOptionsModel options, CancellationToken cancellationToken = default);
+        GenerationWorkspace workspace, InstallationOptionsModel options, AutounattendConfiguration accountConfig,
+        CancellationToken cancellationToken = default);
 }

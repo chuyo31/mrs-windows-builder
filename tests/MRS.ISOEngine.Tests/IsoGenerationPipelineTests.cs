@@ -28,6 +28,7 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     private readonly FakeInstallationImageService _installationImageService = new();
     private readonly FakeWorkingImageFactory _workingImageFactory = new();
     private readonly FakeRemovalEngine _removalEngine = new();
+    private readonly FakeInstallWimOobeConfigurator _installWimOobeConfigurator = new();
     private readonly FakePostInstallPackageBuilder _postInstallPackageBuilder = new();
     private readonly FakeOscdimgRunner _oscdimgRunner = new();
     private readonly FakeElevationChecker _elevationChecker = new();
@@ -60,7 +61,8 @@ public sealed class IsoGenerationPipelineTests : IDisposable
     }
 
     private IsoGenerationPipeline NewPipeline()
-        => new(_treeCopier, _isoMounter, _installationImageService, _workingImageFactory, _removalEngine, _postInstallPackageBuilder, _oscdimgRunner, _elevationChecker);
+        => new(_treeCopier, _isoMounter, _installationImageService, _workingImageFactory, _removalEngine,
+            _installWimOobeConfigurator, _postInstallPackageBuilder, _oscdimgRunner, _elevationChecker);
 
     private IsoGenerationRequest ValidRequest() => new()
     {
@@ -88,6 +90,9 @@ public sealed class IsoGenerationPipelineTests : IDisposable
         Assert.Equal(1, _removalEngine.CallCount);
         Assert.Equal(1, _oscdimgRunner.CallCount);
         Assert.Equal(1, _installationImageService.ValidateFinalCallCount);
+        // AllowOfflineOobe=true por defecto en ValidRequest(): el pipeline debe
+        // configurar BypassNRO también en install.wim (P29), no solo en boot.wim.
+        Assert.Equal(1, _installWimOobeConfigurator.CallCount);
     }
 
     [Fact]
@@ -367,6 +372,45 @@ public sealed class IsoGenerationPipelineTests : IDisposable
 
         Assert.True(result.Success);
         Assert.Equal(options, _installationImageService.LastOptions);
+    }
+
+    [Fact]
+    public async Task AllowOfflineOobe_false_never_calls_the_install_wim_OOBE_configurator()
+    {
+        var pipeline = NewPipeline();
+        var request = ValidRequest() with { InstallationOptions = InstallationOptionsModel.Default with { BypassStorage = false, AllowOfflineOobe = false } };
+
+        var result = await pipeline.GenerateAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, _installWimOobeConfigurator.CallCount);
+    }
+
+    [Fact]
+    public async Task AllowOfflineOobe_true_configures_the_same_working_image_that_RemovalEngine_already_used()
+    {
+        // P29: "trabajar únicamente sobre la working image que ya utiliza el
+        // pipeline" -- nunca una copia distinta ni la ISO original.
+        var pipeline = NewPipeline();
+
+        await pipeline.GenerateAsync(ValidRequest());
+
+        Assert.NotNull(_installWimOobeConfigurator.LastCall);
+        Assert.Equal(_workingImageFactory.WorkingWimPathToReturn, _installWimOobeConfigurator.LastCall!.Value.InstallWimPath);
+    }
+
+    [Fact]
+    public async Task A_failed_install_wim_OOBE_configuration_aborts_before_oscdimg()
+    {
+        _installWimOobeConfigurator.Success = false;
+        _installWimOobeConfigurator.Errors = new[] { "BypassNRO no se pudo verificar en install.wim" };
+        var pipeline = NewPipeline();
+
+        var result = await pipeline.GenerateAsync(ValidRequest());
+
+        Assert.False(result.Success);
+        Assert.Contains("BypassNRO no se pudo verificar en install.wim", result.Errors);
+        Assert.Equal(0, _oscdimgRunner.CallCount);
     }
 
     [Fact]

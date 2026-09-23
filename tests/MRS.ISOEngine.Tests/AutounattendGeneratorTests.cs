@@ -132,17 +132,38 @@ public sealed class AutounattendGeneratorTests
     }
 
     [Fact]
-    public void Generate_never_adds_a_windowsPE_pass()
+    public void Generate_always_adds_a_valid_windowsPE_pass_with_AcceptEula()
     {
-        // P28: se determinó que windowsPE no necesita ninguna configuración
-        // adicional para cuenta local/OOBE offline -- se confirma explícitamente
-        // (en vez de dejarlo implícito) para que un cambio futuro que lo añada
-        // por error se note en este test.
-        var xmlWithOffline = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
-        var xmlWithoutOffline = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: false);
+        // P29, sección 2: reemplaza la decisión de P28 (P28 determinó que no
+        // hacía falta windowsPE; la prueba real demostró que sí hacía falta
+        // para que Setup tratase el resto del archivo como autoritativo desde
+        // el arranque). Presente siempre, no solo cuando AllowOfflineOobe.
+        foreach (var allowOfflineOobe in new[] { true, false })
+        {
+            var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe);
+            var document = XDocument.Parse(xml);
+            XNamespace ns = "urn:schemas-microsoft-com:unattend";
 
-        Assert.DoesNotContain("windowsPE", xmlWithOffline);
-        Assert.DoesNotContain("windowsPE", xmlWithoutOffline);
+            var windowsPeSettings = document.Root!.Elements(ns + "settings")
+                .SingleOrDefault(e => (string?)e.Attribute("pass") == "windowsPE");
+
+            Assert.NotNull(windowsPeSettings);
+            var acceptEula = windowsPeSettings!.Descendants(ns + "AcceptEula").SingleOrDefault()?.Value;
+            Assert.Equal("true", acceptEula);
+            Assert.Contains("Microsoft-Windows-Setup", xml);
+        }
+    }
+
+    [Fact]
+    public void The_windowsPE_pass_appears_before_specialize_and_oobeSystem()
+    {
+        var xml = AutounattendGenerator.Generate(DefaultConfig(), allowOfflineOobe: true);
+
+        var windowsPeIndex = xml.IndexOf("pass=\"windowsPE\"", StringComparison.Ordinal);
+        var specializeIndex = xml.IndexOf("pass=\"specialize\"", StringComparison.Ordinal);
+        var oobeSystemIndex = xml.IndexOf("pass=\"oobeSystem\"", StringComparison.Ordinal);
+
+        Assert.True(windowsPeIndex >= 0 && windowsPeIndex < specializeIndex && specializeIndex < oobeSystemIndex);
     }
 
     [Fact]

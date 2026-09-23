@@ -29,7 +29,8 @@ internal sealed class FakeInstallationImageService : IInstallationImageService
     }
 
     public Task<WorkspaceValidationResult> ValidateFinalAsync(
-        GenerationWorkspace workspace, InstallationOptionsModel options, CancellationToken cancellationToken = default)
+        GenerationWorkspace workspace, InstallationOptionsModel options, AutounattendConfiguration accountConfig,
+        CancellationToken cancellationToken = default)
     {
         ValidateFinalCallCount++;
         return Task.FromResult(FinalValidationSuccess

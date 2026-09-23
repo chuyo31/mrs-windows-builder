@@ -175,15 +175,23 @@ public sealed class InstallationImageService : IInstallationImageService
         return new InstallationImageResult(success, applied, errors, autounattendPath);
     }
 
+    // P29: índice de install.wim en la copia final del workspace de generación.
+    // WorkingImageFactory.CreateAsync (Export-Image) siempre exporta a índice 1
+    // -- distinto de workspace.Index, que es el índice ORIGINAL dentro del
+    // install.wim multi-edición de la ISO fuente.
+    private const int FinalInstallWimIndex = 1;
+
     public async Task<WorkspaceValidationResult> ValidateFinalAsync(
-        GenerationWorkspace workspace, InstallationOptionsModel options, CancellationToken cancellationToken = default)
+        GenerationWorkspace workspace, InstallationOptionsModel options, AutounattendConfiguration accountConfig,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(accountConfig);
 
         if (_dism is null || _registry is null || _labConfigApplier is null)
         {
-            _logger.Warn("[VALIDATE] InstallationImageService se construyó sin IDismRunner/IOfflineRegistryEditor; se omite la validación final de boot.wim/autounattend (P28).");
+            _logger.Warn("[VALIDATE] InstallationImageService se construyó sin IDismRunner/IOfflineRegistryEditor; se omite la validación final de boot.wim/install.wim/autounattend (P28/P29).");
             return WorkspaceValidationResult.Valid;
         }
 
@@ -191,17 +199,15 @@ public sealed class InstallationImageService : IInstallationImageService
 
         foreach (var index in BootWimIndicesRequiringLabConfig)
         {
-            var indexErrors = await ValidateBootWimIndexAsync(workspace.BootWimPath, index, options, workspace.MountPath, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (indexErrors.Count == 0)
-                _logger.Info($"[OK] boot.wim Index {index} LabConfig");
-            else
-                errors.AddRange(indexErrors);
+            errors.AddRange(await ValidateBootWimIndexAsync(workspace.BootWimPath, index, options, workspace.MountPath, cancellationToken)
+                .ConfigureAwait(false));
         }
 
         if (options.AllowLocalAccount)
-            errors.AddRange(ValidateAutounattend(workspace, options));
+            errors.AddRange(ValidateAutounattend(workspace, options, accountConfig));
+
+        if (options.AllowOfflineOobe)
+            errors.AddRange(await ValidateInstallWimOfflineOobeAsync(workspace, cancellationToken).ConfigureAwait(false));
 
         return errors.Count == 0 ? WorkspaceValidationResult.Valid : new WorkspaceValidationResult(false, errors);
     }
@@ -210,7 +216,9 @@ public sealed class InstallationImageService : IInstallationImageService
     /// Vuelve a montar boot.wim de SOLO LECTURA (independiente del mount RW ya
     /// comprometido y desmontado por <see cref="ApplyAsync"/>) y a leer el hive
     /// SYSTEM para confirmar los valores realmente presentes -- nunca se acepta
-    /// que DISM/reg.exe terminaran sin error como prueba suficiente.
+    /// que DISM/reg.exe terminaran sin error como prueba suficiente. Registra
+    /// LabConfig y BypassNRO como dos confirmaciones [OK] independientes
+    /// (P29, sección 8).
     /// </summary>
     private async Task<List<string>> ValidateBootWimIndexAsync(
         string bootWimPath, int index, InstallationOptionsModel options, string mountDir, CancellationToken cancellationToken)
@@ -242,12 +250,16 @@ public sealed class InstallationImageService : IInstallationImageService
             var verification = await _labConfigApplier!.VerifyAsync(hiveKeyName, options, cancellationToken).ConfigureAwait(false);
             if (!verification.IsValid)
                 errors.AddRange(verification.Errors.Select(e => $"[boot.wim índice {index}] {e}"));
+            else
+                _logger.Info($"[OK] boot.wim Index {index} LabConfig");
 
             if (index == WindowsSetupBootWimIndex && options.AllowOfflineOobe)
             {
                 var oobeVerification = await _labConfigApplier.VerifyOfflineOobeBypassAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
                 if (!oobeVerification.IsValid)
                     errors.AddRange(oobeVerification.Errors.Select(e => $"[boot.wim índice {index}] {e}"));
+                else
+                    _logger.Info($"[OK] boot.wim Index {index} BypassNRO");
             }
         }
         finally
@@ -264,12 +276,79 @@ public sealed class InstallationImageService : IInstallationImageService
     }
 
     /// <summary>
-    /// Confirma, leyendo el XML ya escrito por <see cref="ApplyAsync"/>, que
-    /// contiene una cuenta local y (si aplica) el comando de BypassNRO en
-    /// specialize -- nunca se acepta que <c>File.Exists</c> por sí solo sea
-    /// prueba de que el contenido es correcto.
+    /// P29: vuelve a montar el install.wim FINAL del workspace de generación
+    /// (de solo lectura, índice 1 -- ver <see cref="FinalInstallWimIndex"/>) y
+    /// relee BypassNRO del hive SYSTEM, para confirmar que
+    /// <c>InstallWimOobeConfigurator</c> lo dejó realmente persistido -- una
+    /// sesión de montaje completamente nueva, independiente de la que hizo el
+    /// commit.
     /// </summary>
-    private List<string> ValidateAutounattend(GenerationWorkspace workspace, InstallationOptionsModel options)
+    private async Task<List<string>> ValidateInstallWimOfflineOobeAsync(GenerationWorkspace workspace, CancellationToken cancellationToken)
+    {
+        var errors = new List<string>();
+
+        if (!File.Exists(workspace.InstallWimPath))
+        {
+            errors.Add("No se encuentra install.wim en el workspace para validar OOBE offline.");
+            return errors;
+        }
+
+        var mount = await _dism!.MountWimAsync(workspace.InstallWimPath, FinalInstallWimIndex, workspace.MountPath, readOnly: true, cancellationToken)
+            .ConfigureAwait(false);
+        if (!mount.Succeeded)
+        {
+            errors.Add($"No se pudo montar install.wim (índice {FinalInstallWimIndex}) para validar OOBE offline (ExitCode {mount.ExitCode}).");
+            return errors;
+        }
+
+        var hiveKeyName = "MRS_ISOENGINE_FINALVALIDATE_INSTALLWIM_" + Guid.NewGuid().ToString("N")[..8];
+        var hiveFilePath = Path.Combine(workspace.MountPath, "Windows", "System32", "config", "SYSTEM");
+        var hiveLoaded = false;
+
+        try
+        {
+            var load = await _registry!.LoadHiveAsync(hiveKeyName, hiveFilePath, cancellationToken).ConfigureAwait(false);
+            if (!load.Succeeded)
+            {
+                errors.Add($"No se pudo cargar el hive SYSTEM offline de install.wim para la validación final (ExitCode {load.ExitCode}).");
+                return errors;
+            }
+
+            hiveLoaded = true;
+            _logger.Info("[OK] install.wim OOBE configuration");
+
+            var verification = await _labConfigApplier!.VerifyOfflineOobeBypassAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+            if (!verification.IsValid)
+                errors.AddRange(verification.Errors.Select(e => $"[install.wim] {e}"));
+            else
+                _logger.Info("[OK] BypassNRO persisted");
+        }
+        finally
+        {
+            if (hiveLoaded)
+                await _registry!.UnloadHiveAsync(hiveKeyName, cancellationToken).ConfigureAwait(false);
+
+            await _dism.UnmountWimDiscardAsync(workspace.MountPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        return errors;
+    }
+
+    // Únicos componentes reales que este generador escribe (P16/P28/P29); si
+    // apareciera cualquier otro nombre de componente, es señal de un XML ajeno
+    // o corrupto, no de un autounattend generado por MRS.
+    private static readonly string[] KnownComponentNames =
+    {
+        "Microsoft-Windows-Setup", "Microsoft-Windows-Deployment", "Microsoft-Windows-Shell-Setup",
+    };
+
+    /// <summary>
+    /// Confirma, leyendo el XML ya escrito por <see cref="ApplyAsync"/>, que
+    /// contiene una fase windowsPE válida (P29), una cuenta local, y (si aplica)
+    /// el comando de BypassNRO en specialize -- nunca se acepta que
+    /// <c>File.Exists</c> por sí solo sea prueba de que el contenido es correcto.
+    /// </summary>
+    private List<string> ValidateAutounattend(GenerationWorkspace workspace, InstallationOptionsModel options, AutounattendConfiguration accountConfig)
     {
         var errors = new List<string>();
         var path = Path.Combine(workspace.WorkspacePath, "autounattend.xml");
@@ -297,6 +376,38 @@ public sealed class InstallationImageService : IInstallationImageService
 
         XNamespace ns = "urn:schemas-microsoft-com:unattend";
 
+        var passes = document.Root?.Elements(ns + "settings")
+            .Select(e => (string?)e.Attribute("pass"))
+            .Where(p => p is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>();
+
+        if (!passes.Contains("windowsPE"))
+        {
+            errors.Add("autounattend.xml no contiene una fase windowsPE.");
+        }
+        else
+        {
+            _logger.Info("[OK] windowsPE configured");
+        }
+
+        if (!passes.Contains("oobeSystem"))
+        {
+            errors.Add("autounattend.xml no contiene una fase oobeSystem.");
+        }
+        else
+        {
+            _logger.Info("[OK] oobeSystem configured");
+        }
+
+        // "componentes válidos": todo <component name="..."> debe ser uno de los
+        // que MRS realmente escribe -- nunca un nombre inventado o corrupto.
+        var unknownComponents = document.Descendants(ns + "component")
+            .Select(e => (string?)e.Attribute("name"))
+            .Where(name => name is not null && !KnownComponentNames.Contains(name))
+            .ToList();
+        if (unknownComponents.Count > 0)
+            errors.Add($"autounattend.xml contiene componentes no reconocidos: {string.Join(", ", unknownComponents)}.");
+
         if (document.Descendants(ns + "LocalAccount").FirstOrDefault() is null)
         {
             errors.Add("autounattend.xml no contiene una cuenta local configurada.");
@@ -305,6 +416,12 @@ public sealed class InstallationImageService : IInstallationImageService
         {
             _logger.Info("[OK] local account configured");
         }
+
+        // Nunca hay contraseña en el XML si no se pidió ninguna -- comprobado
+        // contra la configuración real, no solo "si existe la etiqueta".
+        var hasPasswordElement = document.Descendants(ns + "Password").Any();
+        if (string.IsNullOrEmpty(accountConfig.Password) && hasPasswordElement)
+            errors.Add("autounattend.xml contiene una contraseña pese a que no se proporcionó ninguna.");
 
         // "Cuenta Microsoft no requerida": HideOnlineAccountScreens evita que
         // Setup ofrezca el flujo de cuenta Microsoft durante oobeSystem.
@@ -318,13 +435,7 @@ public sealed class InstallationImageService : IInstallationImageService
                 .Any(e => e.Value.Contains("BypassNRO", StringComparison.OrdinalIgnoreCase));
 
             if (!hasBypassNroCommand)
-            {
                 errors.Add("autounattend.xml no contiene el comando de bypass de red offline (BypassNRO) esperado en specialize.");
-            }
-            else
-            {
-                _logger.Info("[OK] offline OOBE configured");
-            }
         }
 
         return errors;

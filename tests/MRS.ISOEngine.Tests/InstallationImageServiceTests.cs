@@ -37,6 +37,14 @@ public sealed class InstallationImageServiceTests : IDisposable
         Directory.CreateDirectory(Path.Combine(workspaceRoot, "sources"));
         Directory.CreateDirectory(Path.Combine(workspaceRoot, "mount"));
 
+        // P29: ValidateFinalAsync también revalida install.wim cuando
+        // AllowOfflineOobe está activo; este proyecto de tests no ejercita el
+        // pipeline completo (que sí lo crearía vía WorkingImageFactory/
+        // RemovalEngine), así que se deja un placeholder igual de grande que el
+        // de boot.wim para que ValidateBeforeMountAsync no lo rechace por tamaño.
+        File.WriteAllText(Path.Combine(workspaceRoot, "sources", "install.wim"),
+            string.Concat(Enumerable.Repeat("fake install.wim de trabajo ", 300)));
+
         _workspace = new GenerationWorkspace
         {
             SourceIsoPath = "fake-source.iso",
@@ -226,7 +234,14 @@ public sealed class InstallationImageServiceTests : IDisposable
         var applyResult = await service.ApplyAsync("fake-source.iso", _workspace, options, Account());
         Assert.True(applyResult.Success);
 
-        var validation = await service.ValidateFinalAsync(_workspace, options);
+        // Este proyecto de tests solo ejercita InstallationImageService
+        // (boot.wim/autounattend); el paso que aplica BypassNRO a install.wim
+        // (InstallWimOobeConfigurator, P29) vive en el pipeline y se prueba por
+        // separado -- aquí se simula que ya se aplicó, para poder confirmar que
+        // ValidateFinalAsync sabe leerlo de vuelta.
+        await _registry.SetDwordAsync("MRS_TEST_PRESET", "Setup\\OOBE", "BypassNRO", 1);
+
+        var validation = await service.ValidateFinalAsync(_workspace, options, Account());
 
         Assert.True(validation.IsValid, string.Join("; ", validation.Errors));
         // Confirma que sí volvió a montar (no solo reusó el resultado de ApplyAsync):
@@ -246,7 +261,7 @@ public sealed class InstallationImageServiceTests : IDisposable
         await service.ApplyAsync("fake-source.iso", _workspace, applyOptions, Account());
 
         var differentOptions = applyOptions with { BypassCpu = false };
-        var validation = await service.ValidateFinalAsync(_workspace, differentOptions);
+        var validation = await service.ValidateFinalAsync(_workspace, differentOptions, Account());
 
         Assert.False(validation.IsValid);
         Assert.Contains(validation.Errors, e => e.Contains("BypassCPUCheck"));
@@ -261,7 +276,7 @@ public sealed class InstallationImageServiceTests : IDisposable
         var legacyService = new InstallationImageService(
             new BootWimProvisioner(new FakeIsoMounter(_mountedIsoRoot)), new BootWimModifier(_dism, _registry));
 
-        var validation = await legacyService.ValidateFinalAsync(_workspace, SafeOptions());
+        var validation = await legacyService.ValidateFinalAsync(_workspace, SafeOptions(), Account());
 
         Assert.True(validation.IsValid);
     }
